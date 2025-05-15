@@ -1,19 +1,31 @@
 import os
 import re
+import sys
+import traceback
+
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QComboBox,
     QCheckBox, QFileDialog, QProgressBar, QPlainTextEdit
-)
+    )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread
-from yt_dlp import YoutubeDL
 from PyQt5.QtGui import QIcon
+from yt_dlp import YoutubeDL
 
 # Regex to remove ANSI escape sequences from yt-dlp logs
 ANSI_ESCAPE = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
 
 def strip_ansi_escape(text):
     return ANSI_ESCAPE.sub('', text)
+
+def resource_path(relative_path):
+    
+        try:
+            base_path = sys._MEIPASS  # Set by PyInstaller in --onefile mode
+        except AttributeError:
+            base_path = os.path.abspath(".")
+
+        return os.path.join(base_path, relative_path)
 
 
 class DownloadWorker(QThread):
@@ -28,6 +40,7 @@ class DownloadWorker(QThread):
         self.output_path = output_path
         self.format_option = format_option
         self.is_playlist = is_playlist
+
 
     def hook(self, d):
         if d['status'] == 'downloading':
@@ -124,10 +137,10 @@ class MainWindow(QMainWindow):
 
         #Set app icon
         icon_path = os.path.join(os.path.dirname(__file__), "resources", "QuickYTDL.ico")
-        if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
-        else:
-            print(f"[Warning] Icon not found at: {icon_path}")
+        self.setWindowIcon(QIcon(icon_path))
+        
+        icon_path = resource_path("app/resources/QuickYTDL.ico")
+        self.setWindowIcon(QIcon(icon_path))
         
         user_videos = os.path.join(os.path.expanduser("~"), "Videos", "QuckYTDL Download")
         os.makedirs(user_videos, exist_ok=True)
