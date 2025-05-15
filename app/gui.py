@@ -118,7 +118,7 @@ class MyLogger:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("YouTube Downloader")
+        self.setWindowTitle("QuickYTDL")
         self.setGeometry(100, 100, 700, 500)
 
         user_videos = os.path.join(os.path.expanduser("~"), "Videos", "YTDownload")
