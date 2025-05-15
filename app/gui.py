@@ -129,7 +129,7 @@ class MainWindow(QMainWindow):
         else:
             print(f"[Warning] Icon not found at: {icon_path}")
         
-        user_videos = os.path.join(os.path.expanduser("~"), "Videos", "YTDownload")
+        user_videos = os.path.join(os.path.expanduser("~"), "Videos", "QuckYTDL Download")
         os.makedirs(user_videos, exist_ok=True)
         self.output_directory = user_videos
 
