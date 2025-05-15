@@ -40,9 +40,13 @@ _No installation required._
 ```bash
 pip install -r requirements.txt
 
+---
+
 ## Legal Notice
 
 ⚠️ This tool is for personal/educational use only. The developer is not responsible for misuse.
+
+---
 
 ## License
 
