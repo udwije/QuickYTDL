@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QThread
 from yt_dlp import YoutubeDL
+from PyQt5.QtGui import QIcon
 
 # Regex to remove ANSI escape sequences from yt-dlp logs
 ANSI_ESCAPE = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
@@ -121,6 +122,13 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("QuickYTDL")
         self.setGeometry(100, 100, 700, 500)
 
+        #Set app icon
+        icon_path = os.path.join(os.path.dirname(__file__), "resources", "QuickYTDL.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+        else:
+            print(f"[Warning] Icon not found at: {icon_path}")
+        
         user_videos = os.path.join(os.path.expanduser("~"), "Videos", "YTDownload")
         os.makedirs(user_videos, exist_ok=True)
         self.output_directory = user_videos
