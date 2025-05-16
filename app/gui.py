@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QComboBox,
     QCheckBox, QFileDialog, QProgressBar, QPlainTextEdit
-    )
+)
 from PyQt5.QtCore import Qt, pyqtSignal, QThread
 from PyQt5.QtGui import QIcon
 from yt_dlp import YoutubeDL
@@ -19,14 +19,11 @@ def strip_ansi_escape(text):
     return ANSI_ESCAPE.sub('', text)
 
 def resource_path(relative_path):
-    
-        try:
-            base_path = sys._MEIPASS  # Set by PyInstaller in --onefile mode
-        except AttributeError:
-            base_path = os.path.abspath(".")
-
-        return os.path.join(base_path, relative_path)
-
+    try:
+        base_path = sys._MEIPASS  # Set by PyInstaller in --onefile mode
+    except AttributeError:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 class DownloadWorker(QThread):
     log_output = pyqtSignal(str)
@@ -40,7 +37,6 @@ class DownloadWorker(QThread):
         self.output_path = output_path
         self.format_option = format_option
         self.is_playlist = is_playlist
-
 
     def hook(self, d):
         if d['status'] == 'downloading':
@@ -110,7 +106,6 @@ class DownloadWorker(QThread):
         self.finished.emit()
         self.log_output.emit("\n--- Download completed ---\n")
 
-
 class MyLogger:
     def __init__(self, output_callback):
         self.output_callback = output_callback
@@ -128,21 +123,16 @@ class MyLogger:
         if msg.strip():
             self.output_callback(strip_ansi_escape(msg.strip()))
 
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("QuickYTDL")
         self.setGeometry(100, 100, 700, 500)
 
-        #Set app icon
-        icon_path = os.path.join(os.path.dirname(__file__), "resources", "QuickYTDL.ico")
+        icon_path = resource_path("resources/QuickYTDL.ico")
         self.setWindowIcon(QIcon(icon_path))
-        
-        icon_path = resource_path("app/resources/QuickYTDL.ico")
-        self.setWindowIcon(QIcon(icon_path))
-        
-        user_videos = os.path.join(os.path.expanduser("~"), "Videos", "QuckYTDL Download")
+
+        user_videos = os.path.join(os.path.expanduser("~"), "Videos", "QuickYTDL Downloads")
         os.makedirs(user_videos, exist_ok=True)
         self.output_directory = user_videos
 
@@ -186,13 +176,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("Video List:"))
         self.video_list = QPlainTextEdit()
         self.video_list.setReadOnly(True)
-        #self.video_list.setStyleSheet("background-color: #111; color: #0f0; font-family: Consolas, monospace;")
         layout.addWidget(self.video_list)
 
         layout.addWidget(QLabel("Details:"))
         self.output_console = QPlainTextEdit()
         self.output_console.setReadOnly(True)
-        #self.output_console.setStyleSheet("background-color: #111; color: #0f0; font-family: Consolas, monospace;")
         layout.addWidget(self.output_console)
 
         self.progress_bar = QProgressBar()
@@ -203,8 +191,6 @@ class MainWindow(QMainWindow):
         self.progress_label.setStyleSheet("color: #0f0; font-family: Consolas, monospace;")
         self.progress_label.setAlignment(Qt.AlignLeft)
         layout.addWidget(self.progress_label)
-
-        #self.statusBar().showMessage("Ready")
 
     def browse_directory(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Directory")
@@ -224,9 +210,7 @@ class MainWindow(QMainWindow):
 
         self.output_console.clear()
         self.video_list.clear()
-        #self.output_console.appendPlainText(f"Starting download: {url}")
-        #self.statusBar().showMessage("Downloading...")
-        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setRange(0, 0)  # Indeterminate while preparing
 
         self.worker = DownloadWorker(url, output_path, format_option, is_playlist)
         self.worker.log_output.connect(self.output_console.appendPlainText)
