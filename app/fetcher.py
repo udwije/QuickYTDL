@@ -9,8 +9,8 @@ class Fetcher:
         ydl_opts = {
             'quiet': True,
             'skip_download': True,
-            'ignoreerrors': True,
-            'extract_flat': True,  # to get video info without downloading
+            'extract_flat': False,  # Set to False to extract full metadata
+            'force_generic_extractor': True,  # Ensure extraction even for non-YouTube URLs
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -39,3 +39,5 @@ class Fetcher:
             })
 
         return videos
+
+

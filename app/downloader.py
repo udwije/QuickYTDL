@@ -72,12 +72,12 @@ class DownloadManager(QObject):
             return
 
         for item in items:
-            # Fix: access dict key 'selected' instead of attribute
-            if item.get('selected', False):
+            if item.get('selected', False):  # Access 'selected' key
                 self.task_queue.put((item, format_code))
 
         self.worker = DownloadWorker(self.task_queue, self.signals)
         self.worker.start()
+
 
 
     def cancel_downloads(self):

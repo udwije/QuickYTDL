@@ -5,7 +5,7 @@ from PyQt5.QtCore import Qt
 
 class PlaylistTable(QTableWidget):
     def __init__(self, parent=None):
-        super().__init__(0, 5, parent)  # Changed to 5 columns (no URL)
+        super().__init__(0, 5, parent)  # Changed to 5 columns
         self.setHorizontalHeaderLabels(["✔", "Title", "Duration", "Status", "Progress"])
         self.setColumnWidth(0, 30)
 
@@ -31,11 +31,13 @@ class PlaylistTable(QTableWidget):
             self.setItem(row, 2, QTableWidgetItem(str(item.get("duration", ""))))
             # Status
             self.setItem(row, 3, QTableWidgetItem(item.get("status", "⏳")))
-            # Progress - add progress bar widget
+            # Progress
             progress_bar = QProgressBar()
             progress_bar.setValue(0)
             progress_bar.setAlignment(Qt.AlignCenter)
             self.setCellWidget(row, 4, progress_bar)
+
+
 
     def get_selected_items(self):
         items = []
