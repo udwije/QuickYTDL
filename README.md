@@ -39,7 +39,7 @@ _No installation required._
 
 ```bash
 pip install -r requirements.txt
-
+```
 ---
 
 ## Legal Notice
