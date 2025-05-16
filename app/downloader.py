@@ -1,41 +1,86 @@
-"""QuickYTDL GUI for YouTube Video Downloader
-This script provides a simple GUI for downloading YouTube videos using yt-dlp.
-"""  
-import os
-from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox,
-    QMessageBox, QProgressBar, QPlainTextEdit, QCheckBox, QFileDialog, QApplication
-)
-from PyQt5.QtCore import Qt, pyqtSignal, QThread, QSize, QUrl, QEvent
-from PyQt5.QtGui import QIcon, QFont, QPalette, QColor
-import re
-import sys
-import traceback
-import yt_dlp  # ✅ Ensure yt_dlp is installed to fix E0401
+# =========================
+# app/downloader.py
+# =========================
 
-def download_video(url, output_path, format_option, is_playlist, progress_callback=None):
-    """Downloads a video or playlist using yt-dlp based on the provided options."""  
+import threading
+import queue
+import yt_dlp
+from app.models import PlaylistItem
+from PyQt5.QtCore import QObject
 
-    format_map = {
-        "Best": "best",
-        "Audio Only": "bestaudio/best",
-        "Video Only": "bestvideo/best",
-    }
+class DownloadWorker(threading.Thread):
+    def __init__(self, task_queue, signals):
+        super().__init__()
+        self.task_queue = task_queue
+        self.signals = signals
+        self._stop_event = threading.Event()
 
-    ydl_opts = {
-        'format': format_map.get(format_option, 'best'),
-        'outtmpl': f'{output_path}/%(title)s.%(ext)s',
-        'noplaylist': not is_playlist,
-        'quiet': False,
-        'progress_hooks': [progress_callback] if progress_callback else []
-    }
+    def run(self):
+        while not self._stop_event.is_set():
+            try:
+                item, format_code = self.task_queue.get(timeout=1)
+            except queue.Empty:
+                break
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        return True, "Download completed successfully."
-    except yt_dlp.utils.DownloadError as e:  
-        return False, f"Download error: {str(e)}"
-    except Exception as e:  
-        return False, f"An unexpected error occurred: {str(e)}"
+            self.download_item(item, format_code)
+            self.task_queue.task_done()
 
+    def download_item(self, item: PlaylistItem, format_code: str):
+        # Update status to queued
+        item.update_status("⏳")
+        self.signals.status_update.emit(item.index, item.status)
+
+        ydl_opts = {
+            'format': format_code,
+            'outtmpl': f'%(title)s.%(ext)s',
+            'progress_hooks': [lambda d: self.progress_hook(d, item)],
+            'quiet': True,
+            'no_warnings': True,
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([item.url])
+            item.update_status("✅")
+        except Exception as e:
+            item.update_status("❌")
+            self.signals.log_output.emit(f"Download failed for {item.title}: {str(e)}")
+
+        self.signals.status_update.emit(item.index, item.status)
+
+    def progress_hook(self, d, item):
+        if d['status'] == 'downloading':
+            item.update_status("⏳")
+            self.signals.status_update.emit(item.index, item.status)
+        elif d['status'] == 'finished':
+            item.update_status("✅")
+            self.signals.status_update.emit(item.index, item.status)
+
+    def stop(self):
+        self._stop_event.set()
+
+class DownloadManager(QObject):
+    def __init__(self, signals):
+        super().__init__()
+        self.signals = signals
+        self.task_queue = queue.Queue()
+        self.worker = None
+
+    def start_downloads(self, items, format_code="best"):
+        if self.worker and self.worker.is_alive():
+            self.signals.log_output.emit("Download already in progress.")
+            return
+
+        for item in items:
+            # Fix: access dict key 'selected' instead of attribute
+            if item.get('selected', False):
+                self.task_queue.put((item, format_code))
+
+        self.worker = DownloadWorker(self.task_queue, self.signals)
+        self.worker.start()
+
+
+    def cancel_downloads(self):
+        if self.worker:
+            self.worker.stop()
+            self.signals.log_output.emit("Downloads cancelled.")
