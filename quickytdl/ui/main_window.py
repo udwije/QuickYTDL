@@ -28,13 +28,29 @@ class FormatDelegate(QStyledItemDelegate):
         return combo
 
     def setEditorData(self, editor, index):
-        current = index.data(Qt.ItemDataRole.DisplayRole)
-        editor.setCurrentText(current)
+        editor.setCurrentText(index.data(Qt.ItemDataRole.EditRole))
 
     def setModelData(self, editor, model, index):
-        new_fmt = editor.currentText()
-        model.setData(index, new_fmt, Qt.ItemDataRole.EditRole)
+        model.setData(index, editor.currentText(), Qt.ItemDataRole.EditRole)
 
+class ProgressBarDelegate(QStyledItemDelegate):
+    """
+    Renders a progress bar with centered percentage text for the download table.
+    """
+    def paint(self, painter, option, index):
+        value = int(index.data())
+        from PyQt6.QtWidgets import QStyleOptionProgressBar, QApplication, QStyle
+        opt = QStyleOptionProgressBar()
+        opt.rect = option.rect
+        opt.minimum = 0
+        opt.maximum = 100
+        opt.progress = value
+        opt.text = f"{value}%"
+        opt.textVisible = True
+        opt.textAlignment = Qt.AlignmentFlag.AlignCenter
+        painter.save()
+        QApplication.style().drawControl(QStyle.CE_ProgressBar, opt, painter)
+        painter.restore()
 
 class FetchWorker(QObject):
     """
@@ -119,6 +135,15 @@ class MainWindow(QMainWindow):
         # Fetched-playlist table
         self.fetchTable = QTableView()
         self.fetchTable.setModel(self.fetchModel)
+        
+        # allow clicking checkbox cells to toggle selection
+        self.fetchTable.setEditTriggers(
+            QTableView.EditTrigger.SelectedClicked
+            | QTableView.EditTrigger.DoubleClicked
+            | QTableView.EditTrigger.CurrentChanged
+        )
+        # ensure our click handler toggles the model
+        self.fetchTable.clicked.connect(self.on_fetch_table_clicked)
 
         # Delegate for per-row format dropdown in column 3
         self.fetchTable.setItemDelegateForColumn(3, FormatDelegate(self.fetchTable))
@@ -132,7 +157,6 @@ class MainWindow(QMainWindow):
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
-
         ml.addWidget(self.fetchTable)
 
         # Save-location + Global Format + Download/Cancel buttons
@@ -140,6 +164,7 @@ class MainWindow(QMainWindow):
         hl2.addWidget(QLabel("Save Location:"))
         self.saveEdit    = QLineEdit(self.config.default_save_dir)
         self.browseBtn   = QPushButton("Browse")
+    
 
         # Global Format dropdown moved here, styled green
         self.formatCombo = QComboBox()
@@ -213,9 +238,16 @@ class MainWindow(QMainWindow):
         # Download progress & completion
         self.manager.progress.connect(self.on_download_progress)
         self.manager.finished.connect(self.on_download_finished)
-        # Logging from fetcher & manager
-        #self.fetcher.log.connect(self.logView.append)
-        #self.manager.log.connect(self.logView.append)
+        # fetcher logs come via the worker; manager logs go directly
+        self.manager.log.connect(self.logView.append)
+        # Show download progress in log
+        self.manager.progress.connect(
+            lambda idx, pct, st: self.logView.append(f"[{idx+1}] {st} {int(pct)}%")
+        )
+        # also listen for download progress logs
+        self.manager.progress.connect(
+            lambda idx, pct, st: self.logView.append(f"[{idx+1}] {st} {int(pct)}%")
+        )   
 
     def _prompt_for_default_folder(self):
         msg = QMessageBox(self)
@@ -231,28 +263,39 @@ class MainWindow(QMainWindow):
             ensure_directory(fallback)
             self.config.save()
 
+
     @pyqtSlot()
     def on_fetch_clicked(self):
+        # If a fetch is already running, cancel it and clear out old rows
+        if self._fetch_thread:
+            self._cleanup_fetch_thread()
+        self.fetchModel.set_items([])
+        self.selectAllChk.setChecked(False)
+        self.logView.clear()
+
+        # Grab the URL
         url = self.urlEdit.text().strip()
         if not url:
             return
+
+        # Disable Fetch until done
         self.fetchBtn.setEnabled(False)
 
-        # Spin up fetch thread & worker
+        # Create and start a fresh fetch worker/thread
         self._fetch_thread = QThread(self)
         self._fetch_worker = FetchWorker(self.fetcher)
         self._fetch_worker.moveToThread(self._fetch_thread)
 
-        # Connect worker signals
+        # Hook up signals
         self._fetch_worker.finished.connect(self._handle_fetch_done)
         self._fetch_worker.error.connect(self._handle_fetch_error)
         self._fetch_worker.log.connect(self.logView.append)
         self._fetch_thread.finished.connect(self._cleanup_fetch_thread)
 
-        # Start thread and queue fetch
+        # Kick off the thread
         self._fetch_thread.start()
         self._fetch_worker.fetch_request.emit(url)
-        # Reset Select All (check all) on new fetch
+        # Default to all selected on new fetch
         self.selectAllChk.setChecked(True)
 
     @pyqtSlot(list)
@@ -276,7 +319,7 @@ class MainWindow(QMainWindow):
             combo_model.setData(combo_model.index(idx, 0),
                                 color,
                                 Qt.ItemDataRole.ForegroundRole)
-                                
+
         # Notify view to update checkbox & format cells
         if items:
             top = self.fetchModel.index(0, 0)
@@ -326,17 +369,31 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def on_download_clicked(self):
+        # Lock UI controls during download
+        self.fetchBtn.setEnabled(False)
+        self.urlEdit.setEnabled(False)
+        self.browseBtn.setEnabled(False)
+        self.selectAllChk.setEnabled(False)
+        self.downloadBtn.setEnabled(False)
+
         sel = self.fetchModel.get_selected_items()
         if not sel:
             return
         save_dir = self.saveEdit.text().strip() or self.config.default_save_dir
         ensure_directory(save_dir)
         self.downloadModel.set_items(sel)
-        self.manager.start_downloads(sel, save_dir)
+        self.manager.start_downloads(sel, save_dir) 
 
     @pyqtSlot()
     def on_cancel_clicked(self):
+        # cancel all running downloads...
         self.manager.cancel_all()
+        # and immediately re-enable the UI
+        self.fetchBtn.setEnabled(True)
+        self.urlEdit.setEnabled(True)
+        self.browseBtn.setEnabled(True)
+        self.selectAllChk.setEnabled(True)
+        self.downloadBtn.setEnabled(True)
 
     @pyqtSlot(int, float, str)
     def on_download_progress(self, idx: int, pct: float, status: str):
@@ -346,11 +403,18 @@ class MainWindow(QMainWindow):
     def on_download_finished(self, idx: int, status: str):
         self.downloadModel.update_status(idx, status)
         statuses = self.downloadModel.get_statuses()
-        if all(s in ("Completed", "Skipped") for s in statuses) and self.autoShutdownChk.isChecked():
-            if os.name == "nt":
-                os.system("shutdown /s /t 60")
-            else:
-                os.system("shutdown now")
+        # Once everything’s done, re-enable the UI
+        if all(s in ("Completed", "Skipped") for s in statuses):
+            self.fetchBtn.setEnabled(True)
+            self.urlEdit.setEnabled(True)
+            self.browseBtn.setEnabled(True)
+            self.selectAllChk.setEnabled(True)
+            self.downloadBtn.setEnabled(True)
+            if self.autoShutdownChk.isChecked():
+                if os.name == "nt":
+                    os.system("shutdown /s /t 60")
+                else:
+                    os.system("shutdown now")
     
     @pyqtSlot(int)
     def on_select_all(self, state: int):
@@ -370,3 +434,11 @@ class MainWindow(QMainWindow):
             self.fetchModel.dataChanged.emit(
                 top, bot, [Qt.ItemDataRole.CheckStateRole]
             )
+
+    @pyqtSlot("QModelIndex")
+    def on_fetch_table_clicked(self, index):
+        # if user clicked the checkbox column, toggle manually
+        if index.column() == 0:
+            current = self.fetchModel._items[index.row()].selected
+            new_state = Qt.CheckState.Checked if not current else Qt.CheckState.Unchecked
+            self.fetchModel.setData(index, new_state, Qt.ItemDataRole.CheckStateRole)

@@ -58,7 +58,11 @@ class PlaylistTableModel(QAbstractTableModel):
             return Qt.ItemFlag.NoItemFlags
         col = index.column()
         if col == 0:
-            return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable
+            return (
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsUserCheckable
+            )
         if col == 3:
             return (
                 Qt.ItemFlag.ItemIsEnabled

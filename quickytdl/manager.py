@@ -97,6 +97,10 @@ class DownloadWorker(QThread):
         yt-dlp progress hook callback.
         Receives a dict with download status, emits percent+status.
         """
+        # If user requested cancelation, abort immediately
+        if self.isInterruptionRequested():
+            raise Exception("Download cancelled by user")
+
         status = d.get("status")
         if status == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 1
