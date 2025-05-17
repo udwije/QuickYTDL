@@ -94,14 +94,17 @@ class PlaylistTableModel(QAbstractTableModel):
 
     def set_items(self, items):
         """
-        Replace model items. Initialize selection and formats.
+        Initialize download items: set progress=0, status='Queued',
+        and clear any previous speed/eta.
         """
         self.beginResetModel()
         self._items = items
         for it in self._items:
-            it.selected = False
-            # default selected_format to first available or empty
-            it.selected_format = it.available_formats[0] if it.available_formats else ""
+            it.progress = 0
+            it.status = "Queued"
+            # ensure speed/eta fields exist
+            it.speed = ""
+            it.eta   = ""
         self.endResetModel()
 
     def get_selected_items(self):
@@ -142,8 +145,15 @@ class DownloadTableModel(QAbstractTableModel):
             if col == 2:
                 return item.selected_format
             if col == 3:
-                # show percent, e.g. "42%"
-                return f"{int(item.progress)}%"
+                # Progress column: "42% │ 1.2MiB/s │ ETA 00:12"
+                pct = int(item.progress)
+                parts = [f"{pct}%"]
+                if getattr(item, "speed", ""):
+                    parts.append(item.speed)
+                if getattr(item, "eta", ""):
+                    parts.append(f"ETA {item.eta}")
+                # join with separators
+                return " │ ".join(parts)
             if col == 4:
                 return item.status
 

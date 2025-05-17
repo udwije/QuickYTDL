@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import (
     pyqtSlot, Qt, QThread, QObject, pyqtSignal, QRect
 )
-
+from PyQt6.QtGui import QPainter, QIcon
 from quickytdl.models import PlaylistTableModel, DownloadTableModel
 from quickytdl.fetcher import PlaylistFetcher
 from quickytdl.manager import DownloadManager
@@ -36,16 +36,20 @@ class FormatDelegate(QStyledItemDelegate):
 
 
 class ProgressBarDelegate(QStyledItemDelegate):
-    """Renders a progress bar with centered percentage text."""
-    def paint(self, painter, option, index):
-        # pull raw data, strip any trailing '%' and safely convert to int
-        raw = index.data()
+    """Renders a progress bar with centered percentage text (ignores any trailing speed text)."""
+    def paint(self, painter: QPainter, option, index):
+        # 1) Grab the display string from the model, e.g. "42% 1.2MiB/s"
+        raw = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        # 2) Extract the leading integer percentage
         try:
-            if isinstance(raw, str) and raw.endswith('%'):
-                raw = raw[:-1]
-            value = int(raw)
-        except (ValueError, TypeError):
+            token = raw.split()[0]               # first token, e.g. "42%"
+            if token.endswith('%'):
+                token = token[:-1]
+            value = int(token)
+        except Exception:
             value = 0
+
+        # 3) Configure the progress‐bar style option
         opt = QStyleOptionProgressBar()
         opt.rect = option.rect
         opt.minimum = 0
@@ -54,6 +58,8 @@ class ProgressBarDelegate(QStyledItemDelegate):
         opt.text = f"{value}%"
         opt.textVisible = True
         opt.textAlignment = Qt.AlignmentFlag.AlignCenter
+
+        # 4) Draw it
         painter.save()
         QApplication.style().drawControl(
             QStyle.ControlElement.CE_ProgressBar, opt, painter
@@ -130,8 +136,10 @@ class FetchWorker(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+       self.setWindowIcon(QIcon(":/QuickYTDL.ico"))
         self.setWindowTitle("QuickYTDL")
         self.resize(1000, 700)
+        self.statusBar().showMessage("Ready")
 
         # ── Load settings ─────────────────────────────────────────
         self.config = ConfigManager()
@@ -183,15 +191,11 @@ class MainWindow(QMainWindow):
         self.fetchTable = QTableView()
         self.fetchTable.setModel(self.fetchModel)
 
-        # install header-checkbox in column-0
-        header = CheckBoxHeader(
-            Qt.Orientation.Horizontal, self.fetchTable
-        )
-        # store header so we can reset it later on cancel
-        self.fetchHeader = CheckBoxHeader(Qt.Orientation.Horizontal, self.fetchTable)
+        # ── install a single header‐checkbox in column 0 ─────────────────
+        header = CheckBoxHeader(Qt.Orientation.Horizontal, self.fetchTable)
         self.fetchTable.setHorizontalHeader(header)
-        self.fetchHeader = header  # store for later
-        header.toggled.connect(self.on_select_all)
+        self.fetchHeader = header  # keep a reference so we can reset it later
+        header.toggled.connect(self.on_select_all)  # emit True/False on clicks
 
         # disable built-in edits; we handle selection clicks manually
         self.fetchTable.setEditTriggers(
@@ -315,8 +319,9 @@ class MainWindow(QMainWindow):
         self.autoShutdownChk.stateChanged.connect(
             self.on_auto_shutdown_changed
         )
-
-        # Download events
+        # now also include speed & eta
+        # Download progress & completion (5-arg progress hook: idx, pct, status, speed, eta)
+        # this slot will also update the status bar with speed & ETA
         self.manager.progress.connect(self.on_download_progress)
         self.manager.finished.connect(self.on_download_finished)
         self.manager.log.connect(self.logView.append)
@@ -367,7 +372,7 @@ class MainWindow(QMainWindow):
         self._fetch_thread.start()
         self._fetch_worker.fetch_request.emit(url)
 
-        # default to all selected
+        # default to all selected: set header state + select all rows
         self.fetchHeader._isChecked = True
         self.fetchHeader.updateSection(0)
         self.on_select_all(True)
@@ -377,6 +382,13 @@ class MainWindow(QMainWindow):
         self.fetchBtn.setEnabled(True)
         self.fetchModel.set_items(items)
 
+        # automatically pick subfolder named after playlist
+        # under user’s default save dir
+        title = self.fetcher.last_playlist_title or ""
+        base = os.path.join(self.config.default_save_dir, title)
+        ensure_directory(base)
+        self.saveEdit.setText(base)
+
         # Apply global format to each item
         fmt = self.formatCombo.currentText()
         for it in items:
@@ -384,9 +396,14 @@ class MainWindow(QMainWindow):
             if fmt in it.available_formats:
                 it.selected_format = fmt
 
-        # Color-code global-format dropdown
-        common = set.intersection(*(set(it.available_formats)
-                                   for it in items))
+        #  ── color-code the Global Format combo: green if supported by EVERY video
+        # (drive intersection off of the first set to avoid unbound method issues)
+        if items:
+            common = set(items[0].available_formats)
+            for it in items[1:]:
+                common &= set(it.available_formats)
+        else:
+            common = set()
         combo_model = self.formatCombo.model()
         for idx in range(self.formatCombo.count()):
             f = self.formatCombo.itemText(idx)
@@ -488,9 +505,9 @@ class MainWindow(QMainWindow):
         self.fetchModel.set_items([])
 
         # 4) Reset the header‐checkbox back to “unchecked”
-        if hasattr(self, "fetchHeader"):
-            self.fetchHeader._isChecked = False
-            self.fetchHeader.updateSection(0)
+        # reset header checkbox so future toggles always work
+        self.fetchHeader._isChecked = False
+        self.fetchHeader.updateSection(0)
 
         # 5) Unblock every UI control so the user can start fresh
         self.fetchBtn.setEnabled(True)
@@ -498,9 +515,46 @@ class MainWindow(QMainWindow):
         self.browseBtn.setEnabled(True)
         self.downloadBtn.setEnabled(True)
 
-    @pyqtSlot(int, float, str)
-    def on_download_progress(self, idx: int, pct: float, status: str):
+    @pyqtSlot(int, float, str, str, str)
+    def on_download_progress(self,
+                             idx: int,
+                             pct: float,
+                             status: str,
+                             speed: str,
+                             eta: str):
+        """
+        DownloadWorker.progress(index, percent, status, speed, eta).
+        Updates the per‐row progress bar/status and shows speed & ETA
+        in the main window's status bar.
+        """
+    # update the table cell (percent + optional “Merging” or “Downloading” text)
         self.downloadModel.update_progress(idx, pct, status)
+        # guard against any out-of-bounds idx
+        if 0 <= idx < len(self.downloadModel._items):
+            # store speed & ETA on that item (if you need it later)
+            item = self.downloadModel._items[idx]
+            item.speed = speed
+            item.eta   = eta
+
+        self.statusBar().showMessage(
+             f"Video {idx+1} | Progress: {pct:4.0f}% | Speed: {speed:<8} | ETA: {eta}"
+         )
+        # build a fixed-width, column-aligned message
+        msg = (
+            f"Video {idx+1:>3} | "
+            f"Progress: {pct:>3.0f}% | "
+            f"Speed: {speed:>10} | "
+            f"ETA: {eta:>5}"
+        )
+        self.statusBar().showMessage(msg)
+
+    @pyqtSlot(int, float, str, str, str)
+    def _show_speed_in_statusbar(self, idx: int, pct: float, status: str, speed: str, eta: str):
+        """
+        Show a summary of the current download speed & ETA
+        in the window’s status bar.
+        """
+        self.statusBar().showMessage(f"{pct:4.1f}% • {speed} • ETA {eta}")
 
     @pyqtSlot(int, str)
     def on_download_finished(self, idx: int, status: str):
@@ -512,6 +566,8 @@ class MainWindow(QMainWindow):
             self.urlEdit.setEnabled(True)
             self.browseBtn.setEnabled(True)
             self.downloadBtn.setEnabled(True)
+            # clear the status‐bar once done
+            self.statusBar().clearMessage()
             if self.autoShutdownChk.isChecked():
                 if os.name == "nt":
                     os.system("shutdown /s /t 60")
@@ -545,3 +601,14 @@ class MainWindow(QMainWindow):
                 index, new_st,
                 Qt.ItemDataRole.CheckStateRole
             )
+
+    @pyqtSlot(int, float, str, str, str)
+    def _show_speed_in_statusbar(self, idx, pct, status, speed, eta):
+        """
+        Display a summary in the status bar like:
+           "42.3% at 120.5KiB/s  ETA 02:15"
+        """
+        # you could also show total size if you had stored it on each item
+        self.statusBar().showMessage(
+            f"{pct:4.1f}% at {speed}  ETA {eta}"
+        )

@@ -1,5 +1,5 @@
 # quickytdl/fetcher.py
-
+import re
 from PyQt6.QtCore import QObject, pyqtSignal
 from yt_dlp import YoutubeDL
 
@@ -40,10 +40,13 @@ class PlaylistFetcher(QObject):
             'quiet': True,
             'skip_download': True,
             'no_warnings': True,
-            'extract_flat': 'in_playlist',  # list entries without full metadata
+            #'extract_flat': 'in_playlist',  # list entries without full metadata
+            'extract_flat': True,  # list entries without full metadata
         }
         # default fallback formats if detailed formats unavailable
         self.default_formats = ["1080p", "720p", "480p", "360p"]
+        # will hold last playlist title
+        self.last_playlist_title = None
 
     def fetch_playlist(self, url: str) -> list[VideoItem]:
         """
@@ -61,6 +64,13 @@ class PlaylistFetcher(QObject):
         except Exception as e:
             self.log.emit(f"❌ Failed to fetch metadata: {e}")
             return []
+        # capture and sanitize playlist title
+        raw_title = info.get("title") or "Playlist"
+        # truncate to 20 chars, with ellipsis if needed
+        safe = re.sub(r'[\\\/:*?"<>|]', "", raw_title)
+        if len(safe) > 20:
+            safe = safe[:19] + "…"
+        self.last_playlist_title = safe
 
         entries = info.get('entries') or []
         total = len(entries)
