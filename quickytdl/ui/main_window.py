@@ -2,16 +2,16 @@
 
 import os
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QLineEdit, QComboBox, QPushButton, 
+    QMainWindow, QWidget, QLineEdit, QComboBox, QPushButton,
     QTableView, QFileDialog, QVBoxLayout, QHBoxLayout,
     QTabWidget, QTextEdit, QCheckBox, QLabel
 )
 from PyQt6.QtCore import pyqtSlot, Qt
 
-#from quickytdl.models import PlaylistTableModel, DownloadTableModel
-#from quickytdl.fetcher import PlaylistFetcher
-#from quickytdl.manager import DownloadManager
-#from quickytdl.config import ConfigManager
+from quickytdl.models import PlaylistTableModel, DownloadTableModel
+from quickytdl.fetcher import PlaylistFetcher
+from quickytdl.manager import DownloadManager
+from quickytdl.config import ConfigManager
 
 
 class MainWindow(QMainWindow):
@@ -20,37 +20,38 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("QuickYTDL")
         self.resize(1000, 700)
 
-        # ── load user settings ───────────────────────────────────────────────────
+        # ── load user settings ─────────────────────────────────────
         self.config = ConfigManager()
         self.config.load()
 
-        # ── core components ──────────────────────────────────────────────────────
+        # ── core components ───────────────────────────────────────
         self.fetcher = PlaylistFetcher()
         self.manager = DownloadManager()
 
-        # ── table models ─────────────────────────────────────────────────────────
+        # ── table models ─────────────────────────────────────────
         self.fetchModel    = PlaylistTableModel([])
         self.downloadModel = DownloadTableModel([])
 
-        # ── build out the UI ─────────────────────────────────────────────────────
+        # ── build out the UI ─────────────────────────────────────
         self._build_ui()
         self._connect_signals()
 
+        # ── initialize state from config ─────────────────────────
+        self.autoShutdownChk.setChecked(self.config.auto_shutdown)
+
     def _build_ui(self):
-        # central widget + main vertical layout
         central = QWidget()
         self.setCentralWidget(central)
         vbox = QVBoxLayout(central)
 
-        # ── Tab widget ─────────────────────────────────────────────────────────
         self.tabs = QTabWidget()
         vbox.addWidget(self.tabs)
 
-        # --- 1) QuickYTDL tab ─────────────────────────────────────────────────
+        # ── 1) Main Download Tab ───────────────────────────────────
         tab_main = QWidget()
         main_layout = QVBoxLayout(tab_main)
 
-        # URL input / format selector / Fetch button
+        # URL + global format + Fetch
         hl_url = QHBoxLayout()
         self.urlEdit     = QLineEdit()
         self.urlEdit.setPlaceholderText("Playlist URL")
@@ -58,6 +59,7 @@ class MainWindow(QMainWindow):
         self.formatCombo.addItems(["1080p", "720p", "480p", "360p"])
         self.fetchBtn    = QPushButton("Fetch")
         hl_url.addWidget(self.urlEdit)
+        hl_url.addWidget(QLabel("Global Format:"))
         hl_url.addWidget(self.formatCombo)
         hl_url.addWidget(self.fetchBtn)
         main_layout.addLayout(hl_url)
@@ -67,7 +69,7 @@ class MainWindow(QMainWindow):
         self.fetchTable.setModel(self.fetchModel)
         main_layout.addWidget(self.fetchTable)
 
-        # Save-location + Download / Cancel buttons
+        # Save location + Download/Cancel
         hl_save = QHBoxLayout()
         hl_save.addWidget(QLabel("Save Location:"))
         self.saveEdit    = QLineEdit(self.config.default_save_dir)
@@ -87,15 +89,15 @@ class MainWindow(QMainWindow):
 
         self.tabs.addTab(tab_main, "QuickYTDL")
 
-        # --- 2) Log tab ───────────────────────────────────────────────────────
+        # ── 2) Complete Log Tab ────────────────────────────────────
         tab_log = QWidget()
         log_layout = QVBoxLayout(tab_log)
         self.logView = QTextEdit()
         self.logView.setReadOnly(True)
         log_layout.addWidget(self.logView)
-        self.tabs.addTab(tab_log, "Log")
+        self.tabs.addTab(tab_log, "Complete Log")
 
-        # --- 3) Options tab ───────────────────────────────────────────────────
+        # ── 3) Options Tab ────────────────────────────────────────
         tab_opt = QWidget()
         opt_layout = QVBoxLayout(tab_opt)
         self.autoShutdownChk = QCheckBox("Auto shutdown when complete")
@@ -112,18 +114,19 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(tab_opt, "Options")
 
     def _connect_signals(self):
-        # button clicks
+        # Buttons
         self.fetchBtn.clicked.connect(self.on_fetch_clicked)
         self.browseBtn.clicked.connect(self.on_browse_save)
         self.downloadBtn.clicked.connect(self.on_download_clicked)
         self.cancelBtn.clicked.connect(self.on_cancel_clicked)
         self.defBrowseBtn.clicked.connect(self.on_browse_default)
+        self.autoShutdownChk.stateChanged.connect(self.on_auto_shutdown_changed)
 
-        # download manager signals
+        # Manager signals
         self.manager.progress.connect(self.on_download_progress)
         self.manager.finished.connect(self.on_download_finished)
 
-        # optional logging from fetcher/manager
+        # Logging
         self.fetcher.log.connect(self.logView.append)
         self.manager.log.connect(self.logView.append)
 
@@ -132,8 +135,29 @@ class MainWindow(QMainWindow):
         url = self.urlEdit.text().strip()
         if not url:
             return
+
+        # Fetch items
         items = self.fetcher.fetch_playlist(url)
         self.fetchModel.set_items(items)
+
+        # Apply global format & select all
+        global_fmt = self.formatCombo.currentText()
+        for row, item in enumerate(items):
+            item.selected = True
+            if global_fmt in item.available_formats:
+                item.selected_format = global_fmt
+
+        # Notify view of bulk update (columns 0–3)
+        if items:
+            top = self.fetchModel.index(0, 0)
+            bottom = self.fetchModel.index(
+                self.fetchModel.rowCount() - 1,
+                self.fetchModel.columnCount() - 1
+            )
+            self.fetchModel.dataChanged.emit(
+                top, bottom,
+                [Qt.ItemDataRole.CheckStateRole, Qt.ItemDataRole.EditRole]
+            )
 
     @pyqtSlot()
     def on_browse_save(self):
@@ -152,6 +176,12 @@ class MainWindow(QMainWindow):
             self.defSaveEdit.setText(directory)
             self.config.default_save_dir = directory
             self.config.save()
+
+    @pyqtSlot(int)
+    def on_auto_shutdown_changed(self, state):
+        enabled = (state == Qt.CheckState.Checked)
+        self.config.auto_shutdown = enabled
+        self.config.save()
 
     @pyqtSlot()
     def on_download_clicked(self):
@@ -174,10 +204,12 @@ class MainWindow(QMainWindow):
     def on_download_finished(self, index, status):
         self.downloadModel.update_status(index, status)
 
-        # if everything’s done and user wants auto‐shutdown:
-        all_statuses = self.downloadModel.get_statuses()
-        if all(s in ("Completed", "Skipped") for s in all_statuses):
+        # Auto-shutdown if desired and all done
+        statuses = self.downloadModel.get_statuses()
+        if all(s in ("Completed", "Skipped") for s in statuses):
             if self.autoShutdownChk.isChecked():
-                # Windows
-                os.system("shutdown /s /t 60")
-                # (or use cross‐platform approaches if desired)
+                if os.name == "nt":
+                    os.system("shutdown /s /t 60")
+                else:
+                    os.system("shutdown now")
+
