@@ -136,7 +136,9 @@ class FetchWorker(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-       self.setWindowIcon(QIcon(":/QuickYTDL.ico"))
+        # ── set application icon ───────────────────────────────────────
+        # resource path from your compiled resources_rc.py
+        self.setWindowIcon(QIcon(":/QuickYTDL.ico"))
         self.setWindowTitle("QuickYTDL")
         self.resize(1000, 700)
         self.statusBar().showMessage("Ready")
