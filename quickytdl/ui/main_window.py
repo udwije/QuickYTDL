@@ -138,7 +138,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         # ── set application icon ───────────────────────────────────────
         # resource path from your compiled resources_rc.py
-        self.setWindowIcon(QIcon(":/QuickYTDL.ico"))
+        #self.setWindowIcon(QIcon(":/QuickYTDL.ico"))
         self.setWindowTitle("QuickYTDL")
         self.resize(1000, 700)
         self.statusBar().showMessage("Ready")

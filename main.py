@@ -13,7 +13,7 @@ def main():
         "qt.text.font.db=false"
     )
     app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon(":/QuickYTDL.ico"))  # set taskbar & window icon
+    #app.setWindowIcon(QIcon(":/QuickYTDL.ico"))  # set taskbar & window icon
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
