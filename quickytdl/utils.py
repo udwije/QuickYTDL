@@ -50,13 +50,13 @@ def get_default_save_dir(app_name: str = "QuickYTDL") -> str:
     """
     home = os.path.expanduser("~")
 
-    # 1) Try ~/Videos
+    # 1) Ensure ~/Videos exists, then create ~/Videos/<app_name> Downloads
     videos_dir = os.path.join(home, "Videos")
-    if os.path.isdir(videos_dir):
-        candidate = os.path.join(videos_dir, f"{app_name} Downloads")
-        ensure_directory(candidate)
-        if os.path.isdir(candidate):
-            return candidate
+    ensure_directory(videos_dir)   # will mkdir ~/Videos if needed
+    candidate = os.path.join(videos_dir, f"{app_name} Downloads")
+    ensure_directory(candidate)    # now mkdir the subfolder
+    if os.path.isdir(candidate):
+        return candidate
 
     # 2) Fallback to home folder
     candidate = os.path.join(home, f"{app_name} Downloads")

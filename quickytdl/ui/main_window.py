@@ -123,7 +123,9 @@ class FetchWorker(QObject):
             self.finished.emit(items)
         except Exception as e:
             self.error.emit(str(e))
-
+        finally:
+            # once fetch is done (or errors), exit this thread's event loop
+            QThread.currentThread().quit()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -185,6 +187,8 @@ class MainWindow(QMainWindow):
         header = CheckBoxHeader(
             Qt.Orientation.Horizontal, self.fetchTable
         )
+        # store header so we can reset it later on cancel
+        self.fetchHeader = CheckBoxHeader(Qt.Orientation.Horizontal, self.fetchTable)
         self.fetchTable.setHorizontalHeader(header)
         self.fetchHeader = header  # store for later
         header.toggled.connect(self.on_select_all)
@@ -467,8 +471,28 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def on_cancel_clicked(self):
+        # 1) Stop any downloads in progress and clear that table
         self.manager.cancel_all()
-        # re-enable UI immediately
+        self.downloadModel.set_items([])
+
+        # 2) Prevent any late fetch callbacks from touching our UI
+        if self._fetch_worker:
+            try:
+                self._fetch_worker.finished.disconnect(self._handle_fetch_done)
+                self._fetch_worker.error.disconnect(self._handle_fetch_error)
+                self._fetch_worker.log.disconnect(self.logView.append)
+            except Exception:
+                pass
+
+        # 3) Clear the fetch table entirely
+        self.fetchModel.set_items([])
+
+        # 4) Reset the header‐checkbox back to “unchecked”
+        if hasattr(self, "fetchHeader"):
+            self.fetchHeader._isChecked = False
+            self.fetchHeader.updateSection(0)
+
+        # 5) Unblock every UI control so the user can start fresh
         self.fetchBtn.setEnabled(True)
         self.urlEdit.setEnabled(True)
         self.browseBtn.setEnabled(True)
