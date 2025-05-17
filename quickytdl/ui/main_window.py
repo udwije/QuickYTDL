@@ -38,7 +38,14 @@ class FormatDelegate(QStyledItemDelegate):
 class ProgressBarDelegate(QStyledItemDelegate):
     """Renders a progress bar with centered percentage text."""
     def paint(self, painter, option, index):
-        value = int(index.data())
+        # pull raw data, strip any trailing '%' and safely convert to int
+        raw = index.data()
+        try:
+            if isinstance(raw, str) and raw.endswith('%'):
+                raw = raw[:-1]
+            value = int(raw)
+        except (ValueError, TypeError):
+            value = 0
         opt = QStyleOptionProgressBar()
         opt.rect = option.rect
         opt.minimum = 0
@@ -48,7 +55,9 @@ class ProgressBarDelegate(QStyledItemDelegate):
         opt.textVisible = True
         opt.textAlignment = Qt.AlignmentFlag.AlignCenter
         painter.save()
-        QApplication.style().drawControl(QStyle.CE_ProgressBar, opt, painter)
+        QApplication.style().drawControl(
+            QStyle.ControlElement.CE_ProgressBar, opt, painter
+        )
         painter.restore()
 
 

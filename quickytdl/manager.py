@@ -3,6 +3,9 @@
 import os
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from yt_dlp import YoutubeDL
+import imageio_ffmpeg as _iioffmpeg
+
+
 
 from quickytdl.utils import sanitize_filename  # helper to strip illegal filename characters
 
@@ -71,6 +74,8 @@ class DownloadWorker(QThread):
             "quiet": True,
             "no_warnings": True,
             "progress_hooks": [self._progress_hook],
+        #point at the ffmpeg binary provided by imageio-ffmpeg:
+            "ffmpeg_location": _iioffmpeg.get_ffmpeg_exe(),
         }
 
         # 6) Start download
