@@ -3,19 +3,23 @@
 import os
 import re
 from datetime import timedelta, datetime
+from pathlib import Path
 
 def sanitize_filename(filename: str) -> str:
     """
     Strip out characters that are illegal in filenames on most filesystems.
     """
-    # Remove invalid chars: \ / : * ? " < > | 
     return re.sub(r'[\\\/:*?"<>|]', "", filename)
 
 def ensure_directory(path: str) -> None:
     """
-    Create the directory (and parents) if it doesn't already exist.
+    Create the directory (and parents) if it doesn't already exist,
+    using pathlib for cross-platform reliability.
     """
-    os.makedirs(path, exist_ok=True)
+    try:
+        Path(path).mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"[Utils] Error creating directory {path}: {e}")
 
 def human_readable_size(num_bytes: int, suffix: str = "B") -> str:
     """
@@ -39,13 +43,21 @@ def format_duration(seconds: int) -> str:
 def get_default_save_dir(app_name: str = "QuickYTDL") -> str:
     """
     Return a default save directory under the user's Videos folder,
-    e.g. ~/Videos/QuickYTDL Downloads
+    e.g. C:\\Users\\<User>\\Videos\\QuickYTDL Downloads.
+    Falls back to a subfolder of the current working dir if creation fails.
     """
-    home = os.path.expanduser("~")
-    videos_dir = os.path.join(home, "Videos")
-    default_dir = os.path.join(videos_dir, f"{app_name} Downloads")
-    ensure_directory(default_dir)
-    return default_dir
+    try:
+        home = os.path.expanduser("~")
+        videos_dir = os.path.join(home, "Videos")
+        default_dir = os.path.join(videos_dir, f"{app_name} Downloads")
+        ensure_directory(default_dir)
+        return default_dir
+    except Exception as e:
+        print(f"[Utils] Could not create default save dir: {e}")
+        # fallback
+        fallback = os.path.join(os.getcwd(), f"{app_name}_Downloads")
+        ensure_directory(fallback)
+        return fallback
 
 def timestamped(message: str) -> str:
     """

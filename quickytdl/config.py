@@ -17,9 +17,11 @@ class ConfigManager:
         # determine where to store the config file
         self._config_path = self._get_config_path()
 
+        # ensure the save directory from config always exists
+        ensure_directory(self.default_save_dir)
+
     def _get_config_path(self) -> str:
         home = os.path.expanduser("~")
-        # on Windows, use %APPDATA%\QuickYTDL\, otherwise ~/.config/QuickYTDL/
         if os.name == "nt":
             root = os.getenv("APPDATA", home)
         else:
@@ -37,11 +39,12 @@ class ConfigManager:
                 data = json.load(f)
             self.default_save_dir = data.get("default_save_dir", self.default_save_dir)
             self.auto_shutdown    = data.get("auto_shutdown",    self.auto_shutdown)
+            # re-ensure in case the loaded path changed
+            ensure_directory(self.default_save_dir)
         except FileNotFoundError:
             # no config yet—first run
             return
         except Exception as e:
-            # fail silently or log if you prefer
             print(f"[Config] Error loading config: {e}")
 
     def save(self) -> None:
