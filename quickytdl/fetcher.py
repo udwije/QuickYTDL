@@ -6,72 +6,106 @@ from yt_dlp import YoutubeDL
 
 class VideoItem:
     """
-    Simple container for a single video entry in a playlist.
-    Attributes populated by PlaylistFetcher.fetch_playlist().
+    Represents a single video entry in a playlist.
+
+    Attributes:
+        index (int): 1-based position in the playlist.
+        title (str): Video title (or fallback to ID).
+        available_formats (list[str]): List of resolution strings (e.g. '1080p').
+        url (str): The video URL for downloading.
     """
-    def __init__(self, index: int, title: str, available_formats: list[str]):
+    def __init__(self, index: int, title: str, available_formats: list[str], url: str):
         self.index = index
         self.title = title
         self.available_formats = available_formats
-        # The following will be managed by the table models:
-        # self.selected: bool
-        # self.selected_format: str
-        # self.progress: float
-        # self.status: str
+        self.url = url
+        # The following fields are managed by the table models:
+        # self.selected, self.selected_format, self.progress, self.status
 
 
 class PlaylistFetcher(QObject):
     """
-    Uses yt-dlp to extract playlist info and emits log messages.
+    Fetches playlist metadata via yt-dlp.
+    Emits log messages so the UI can display progress and status.
+
+    Uses the "flat" extractor to list titles and URLs quickly,
+    then provides a fixed set of common resolutions for selection.
     """
     log = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
-        # yt-dlp options to suppress output and skip actual download
+        # yt-dlp options: no download, minimal output, flat list
         self.ydl_opts = {
             'quiet': True,
             'skip_download': True,
-            # we want full format list in entry['formats']
             'no_warnings': True,
+            'extract_flat': 'in_playlist',  # list entries without full metadata
         }
+        # default fallback formats if detailed formats unavailable
+        self.default_formats = ["1080p", "720p", "480p", "360p"]
 
     def fetch_playlist(self, url: str) -> list[VideoItem]:
         """
-        Given a YouTube playlist URL, returns a list of VideoItem
-        with index, title, and available_formats (e.g. ["1080p","720p",...]).
-        Emits log messages via the `log` signal.
+        Retrieves the playlist entries for the given URL.
+
+        Returns:
+            list[VideoItem]: A list of VideoItem with index, title,
+                             available_formats, and URL.
         """
-        self.log.emit(f"Fetching playlist: {url}")
-        items: list[VideoItem] = []
+        self.log.emit(f"🔍 Starting metadata extraction for:\n{url}")
+
         try:
             with YoutubeDL(self.ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
         except Exception as e:
-            self.log.emit(f"❌ Error fetching playlist: {e}")
-            return items
+            self.log.emit(f"❌ Failed to fetch metadata: {e}")
+            return []
 
         entries = info.get('entries') or []
+        total = len(entries)
+        self.log.emit(f"🔎 Found {total} videos in playlist.")
+
+        items: list[VideoItem] = []
         for i, entry in enumerate(entries, start=1):
+            if entry is None:
+                self.log.emit(f"  ⚠️ Skipping empty entry at position {i}")
+                continue
+
+            # Title fallback: use ID if title missing
             title = entry.get('title') or entry.get('id') or f"Video #{i}"
-            # Collect unique heights from available formats
-            formats = entry.get('formats', [])
-            heights = {
-                f"{fmt['height']}p"
-                for fmt in formats
-                if fmt.get('height') is not None
-            }
-            # Sort by numeric value descending (1080p, 720p, ...)
-            available_formats = sorted(
-                heights,
-                key=lambda s: int(s.rstrip('p')),
-                reverse=True
-            )
-            item = VideoItem(i, title, available_formats)
+            self.log.emit(f"  • Processing [{i}/{total}]: {title}")
+
+            # Determine available formats if provided, else fallback
+            formats = entry.get('formats', None)
+            if formats and isinstance(formats, list):
+                # extract unique heights, e.g. 1080p, 720p
+                heights = {
+                    f"{fmt['height']}p"
+                    for fmt in formats
+                    if fmt.get('height') is not None
+                }
+                available_formats = sorted(
+                    heights,
+                    key=lambda s: int(s.rstrip('p')),
+                    reverse=True
+                )
+                if not available_formats:
+                    self.log.emit("    – No video formats found, using defaults.")
+                    available_formats = self.default_formats.copy()
+            else:
+                # flat extractor does not include formats
+                available_formats = self.default_formats.copy()
+                self.log.emit("    – Using default format list.")
+
+            # Pick the best URL field for download
+            video_url = entry.get('webpage_url') or entry.get('id')
+            item = VideoItem(i, title, available_formats, video_url)
             items.append(item)
+
             self.log.emit(
-                f"  • [{i}] {title} — formats: {', '.join(available_formats) or 'none'}"
+                f"    – Formats: {', '.join(available_formats)}"
             )
 
-        self.log.emit(f"✅ Fetched {len(items)} videos.")
+        self.log.emit(f"✅ Completed metadata for {len(items)} videos.\n")
         return items
