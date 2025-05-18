@@ -7,7 +7,7 @@ Supports single videos & full playlists, per-item format selection, global forma
 
 ---
 
-## 🚀 New in v1.x
+## 🚀 New in v1.1.0
 
 - ✅ **Per-playlist subfolder** — each download run creates its own folder (first 20 chars of playlist title)  
 - 🌐 **Global & per-video format** — set a default format for the entire batch, or override each row  
