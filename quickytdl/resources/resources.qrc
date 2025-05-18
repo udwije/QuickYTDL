@@ -1,6 +1,0 @@
-<!-- quickytdl/resources/resources.qrc -->
-<RCC>
-  <qresource prefix="/">
-    <file>QuickYTDL.ico</file>
-  </qresource>
-</RCC>
