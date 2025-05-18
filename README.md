@@ -1,6 +1,6 @@
 # QuickYTDL 🎬
 
-A fast, modern, open-source YouTube downloader with a sleek PyQt6 GUI.  
+A fast, modern, open-source Playlist downloader with a sleek PyQt6 GUI.  
 Supports single videos & full playlists, per-item format selection, global format presets, real-time progress (with speed & ETA), auto-shutdown, and more.
 
 > 💡 Built with Python, `yt-dlp`, and PyQt6.  
