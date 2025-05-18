@@ -5,6 +5,9 @@ Supports single videos & full playlists, per-item format selection, global forma
 
 > 💡 Built with Python, `yt-dlp`, and PyQt6. Powered by AI-assisted development.
 
+
+https://github.com/user-attachments/assets/2e66109c-18a6-47c3-a3a8-96ce3d35e865
+
 ---
 
 ## 🚀 New in v1.1.0
