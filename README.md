@@ -71,7 +71,9 @@ pip install -r requirements.txt
 # Compile the Qt resource file:
 pyside6-rcc quickytdl/resources/resources.qrc -o quickytdl/resources_rc.py
 ```
+
 ```bash
+# Launch the app
 python main.py
 ```
 
