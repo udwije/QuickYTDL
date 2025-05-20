@@ -1,13 +1,14 @@
 # quickytdl/ui/main_window.py
 
 import os
+
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QLineEdit, QComboBox, QPushButton,
     QTableView, QFileDialog, QVBoxLayout, QHBoxLayout,
     QTabWidget, QTextEdit, QLabel, QMessageBox,
     QStyledItemDelegate, QHeaderView,
     QStyleOptionProgressBar, QStyle, QApplication,
-    QStyleOptionButton, QStyleOptionViewItem, QCheckBox
+    QStyleOptionButton, QStyleOptionViewItem, QCheckBox,QProgressBar
 )
 from PyQt6.QtCore import (
     pyqtSlot, Qt, QThread, QObject, pyqtSignal, QRect
@@ -137,11 +138,16 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         # ── set application icon ───────────────────────────────────────
-        # resource path from your compiled resources_rc.py
+        # resource path from the compiled resources_rc.py
         #self.setWindowIcon(QIcon(":/QuickYTDL.ico"))
         self.setWindowTitle("QuickYTDL")
         self.resize(1000, 700)
+        #self.statusBar().showMessage("Ready")
+        # initial status message and attach a progress bar
         self.statusBar().showMessage("Ready")
+        self.sb_progress = QProgressBar()
+        self.sb_progress.setVisible(False)
+        self.statusBar().addPermanentWidget(self.sb_progress)
 
         # ── Load settings ─────────────────────────────────────────
         self.config = ConfigManager()
@@ -338,6 +344,10 @@ class MainWindow(QMainWindow):
         self.manager.progress.connect(self.on_download_progress)
         self.manager.finished.connect(self.on_download_finished)
         self.manager.log.connect(self.logView.append)
+        # route log events into the status bar for highlights
+        self.manager.log.connect(self._on_log_message)
+
+                # connect download and log signals
 
     def _prompt_for_default_folder(self):
         msg = QMessageBox(self)
@@ -567,6 +577,9 @@ class MainWindow(QMainWindow):
             f"ETA: {eta:>5}"
         )
         self.statusBar().showMessage(msg)
+        # drive the determinate progress bar when visible
+        if self.sb_progress.isVisible() and self.sb_progress.maximum() == 100:
+            self.sb_progress.setValue(int(pct))
 
     @pyqtSlot(int, float, str, str, str)
     def _show_speed_in_statusbar(self, idx: int, pct: float, status: str, speed: str, eta: str):
@@ -588,6 +601,9 @@ class MainWindow(QMainWindow):
             self.downloadBtn.setEnabled(True)
             # clear the status‐bar once done
             self.statusBar().clearMessage()
+            # hide progress bar and show finished message
+            self.sb_progress.setVisible(False)
+            self.statusBar().showMessage("All downloads completed.")
             if self.autoShutdownChk.isChecked():
                 if os.name == "nt":
                     os.system("shutdown /s /t 60")
@@ -632,3 +648,23 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"{pct:4.1f}% at {speed}  ETA {eta}"
         )
+    @pyqtSlot(str)
+    def _on_log_message(self, message: str):
+        """
+        Highlight key operations in the status bar and control the sb_progress widget.
+        """
+        # show these emojis directly
+        if message.startswith(("🔍", "🔎", "✅", "🚀", "⏬")):
+            self.statusBar().showMessage(message)
+        # fetch-start -> busy
+        if message.startswith("🔍"):
+            self.sb_progress.setVisible(True)
+            self.sb_progress.setRange(0, 0)  # busy indicator
+        # after fetching metadata or completion -> hide busy
+        elif message.startswith("🔎") or message.startswith("✅"):
+            self.sb_progress.setVisible(False)
+        # download start -> determinate bar
+        elif message.startswith("🚀"):
+            self.sb_progress.setVisible(True)
+            self.sb_progress.setRange(0, 100)
+            self.sb_progress.setValue(0)
