@@ -106,6 +106,7 @@ This project is released under the GPL-3.0 license.
 # Dependencies & Their Licenses
   * yt-dlp — Unlicense
   * imageio-ffmpeg — BSD 3-Clause
+
 Please carry forward their respective license notices if you redistribute.
 
 ---
