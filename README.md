@@ -1,7 +1,7 @@
 # QuickYTDL
 
 A fast, modern, open-source playlist and video downloader with a sleek PyQt6 GUI.  
-Download single videos or entire playlists in your choice of resolution or MP3, track per-item progress, and optionally shut down your machine when done.
+Download single videos or entire playlists in your choice of Video resolutions or MP3, track per-item progress, and optionally shut down your machine when done.
 
 ---
 
