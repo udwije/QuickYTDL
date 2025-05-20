@@ -1,14 +1,15 @@
 # quickytdl/ui/main_window.py
 
 import os
+import re
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QLineEdit, QComboBox, QPushButton,
+    QProgressBar,QMainWindow, QWidget, QLineEdit, QComboBox, QPushButton,
     QTableView, QFileDialog, QVBoxLayout, QHBoxLayout,
     QTabWidget, QTextEdit, QLabel, QMessageBox,
     QStyledItemDelegate, QHeaderView,
     QStyleOptionProgressBar, QStyle, QApplication,
-    QStyleOptionButton, QStyleOptionViewItem, QCheckBox,QProgressBar
+    QStyleOptionButton, QStyleOptionViewItem, QCheckBox,
 )
 from PyQt6.QtCore import (
     pyqtSlot, Qt, QThread, QObject, pyqtSignal, QRect
@@ -143,8 +144,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("QuickYTDL")
         self.resize(1000, 700)
         #self.statusBar().showMessage("Ready")
-        # initial status message and attach a progress bar
-        self.statusBar().showMessage("Ready")
+       # add progress bar to status bar
         self.sb_progress = QProgressBar()
         self.sb_progress.setVisible(False)
         self.statusBar().addPermanentWidget(self.sb_progress)
@@ -320,7 +320,12 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         # Fetch
+        #self.fetchBtn.clicked.connect(self.on_fetch_clicked)
+        # Fetch button + route its logs
         self.fetchBtn.clicked.connect(self.on_fetch_clicked)
+        # send every fetcher.log into the text log AND status‐bar handler
+        self.fetcher.log.connect(self.logView.append)
+        self.fetcher.log.connect(self._on_log_message)
 
         # Browse
         self.browseBtn.clicked.connect(self.on_browse_save)
@@ -347,7 +352,7 @@ class MainWindow(QMainWindow):
         # route log events into the status bar for highlights
         self.manager.log.connect(self._on_log_message)
 
-                # connect download and log signals
+        # connect download and log signals
 
     def _prompt_for_default_folder(self):
         msg = QMessageBox(self)
@@ -512,9 +517,12 @@ class MainWindow(QMainWindow):
             self.saveEdit.text().strip()
             or self.config.default_save_dir
         )
-        ensure_directory(save_dir)
+        #ensure_directory(save_dir)
         self.downloadModel.set_items(sel)
         self.manager.start_downloads(sel, save_dir)
+        # make sure the status-bar progress is hidden once we hit download
+        #self.sb_progress.setVisible(False)
+        #ensure_directory(save_dir)
 
     @pyqtSlot()
     def on_cancel_clicked(self):
@@ -653,18 +661,39 @@ class MainWindow(QMainWindow):
         """
         Highlight key operations in the status bar and control the sb_progress widget.
         """
-        # show these emojis directly
-        if message.startswith(("🔍", "🔎", "✅", "🚀", "⏬")):
-            self.statusBar().showMessage(message)
-        # fetch-start -> busy
-        if message.startswith("🔍"):
+        # normalize the incoming text
+        text = message.strip()
+
+        # 1) Show key emoji messages immediately
+        if text.startswith(("🔍", "🔎", "✅", "🚀", "⏬")):
+            self.statusBar().showMessage(text)
+
+        # 2) Start of metadata fetch -> indeterminate progress
+        if text.startswith("🔍"):
             self.sb_progress.setVisible(True)
-            self.sb_progress.setRange(0, 0)  # busy indicator
-        # after fetching metadata or completion -> hide busy
-        elif message.startswith("🔎") or message.startswith("✅"):
-            self.sb_progress.setVisible(False)
-        # download start -> determinate bar
-        elif message.startswith("🚀"):
+            self.sb_progress.setRange(0, 0)
+            return
+
+        # 3) Playlist metadata entries progress: "[i/n]" -> determinate
+        m = re.search(r"\[(\d+)/(\d+)\]", text)
+        if m:
+            current, total = map(int, m.groups())
+            pct = int(current / total * 100)
             self.sb_progress.setVisible(True)
             self.sb_progress.setRange(0, 100)
-            self.sb_progress.setValue(0)
+            self.sb_progress.setValue(pct)
+            return
+
+        # 4) Total count found -> hide indeterminate bar
+        if text.startswith("🔎"):
+            self.sb_progress.setVisible(False)
+            return
+
+        # 5) Metadata extraction completed -> hide bar
+        if text.startswith("✅") and "metadata" in text.lower():
+            self.sb_progress.setVisible(False)
+            return
+        # 6) Download phase start -> hide status-bar bar entirely
+        if text.startswith("🚀"):
+            self.sb_progress.setVisible(False)
+            return

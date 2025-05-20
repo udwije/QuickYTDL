@@ -68,6 +68,9 @@ class PlaylistFetcher(QObject):
             return []
 
         entries = info.get('entries') or []
+        # If no playlist entries and no ?list=… param, treat as a single‐video playlist
+        if not entries and list_id is None:
+            entries = [info]
 
         # 2) If no entries but we have a list_id, re-fetch the actual playlist
         if not entries and list_id:
@@ -80,6 +83,7 @@ class PlaylistFetcher(QObject):
                 self.log.emit(f"❌ Failed to fetch playlist: {e}")
                 return []
             entries = info.get('entries') or []
+            
 
         # 3) Determine playlist title
         raw_title = info.get("title") or info.get("playlist_title") or "Playlist"
