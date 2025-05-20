@@ -32,8 +32,6 @@ class DownloadWorker(QThread):
         self.selected_format = getattr(item, "selected_format", None)
 
     def run(self):
-
-        # throttle concurrency
         _download_semaphore.acquire()
         try:
             # 1) Pre‐check for cancellation
@@ -42,7 +40,7 @@ class DownloadWorker(QThread):
                 self.finished.emit(self.index, "Canceled")
                 return
 
-            # 2) Ensure save dir
+            # 2) Ensure save dir exists
             try:
                 os.makedirs(self.save_dir, exist_ok=True)
             except Exception as e:
@@ -50,15 +48,27 @@ class DownloadWorker(QThread):
                 self.finished.emit(self.index, "Failed")
                 return
 
-            # 3) Format string
-            height = None
-            if isinstance(self.selected_format, str) and self.selected_format.endswith("p"):
-                try: height = int(self.selected_format.rstrip("p"))
-                except: height = None
-            fmt = f"bestvideo[height<={height}]+bestaudio/best" if height else "best"
+           # 3) Build format string based on user choice
+            selected = self.selected_format
+            if selected == "mp3":
+                # audio‐only
+                fmt = "bestaudio/best"
+
+            elif selected in ["1080p", "720p", "480p", "360p"]:
+                # exact MP4 @HEIGHT + best M4A audio,
+                # fallback to <=HEIGHT MP4+M4A, then any MP4
+                height = int(selected.rstrip("p"))
+                fmt = (
+                   f"bestvideo[height={height}][ext=mp4]+bestaudio[ext=m4a]/"
+                    f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/"
+                    f"best[ext=mp4]"
+                )
+
+            else:
+                # last‐resort
+                fmt = "best"
 
             # 4) Safe output template
-            from quickytdl.utils import sanitize_filename
             safe_title = sanitize_filename(self.item.title)
             outtmpl = os.path.join(
                 self.save_dir,
@@ -66,23 +76,38 @@ class DownloadWorker(QThread):
             )
             os.makedirs(os.path.dirname(outtmpl), exist_ok=True)
 
-            # 5) YDL opts (point at embedded ffmpeg if you have it)
+            # 5) YDL opts (embed the bundled FFmpeg and enable progress hooks)
             from imageio_ffmpeg import get_ffmpeg_exe
             ydl_opts = {
                 "format": fmt,
                 "outtmpl": outtmpl,
                 "quiet": True,
-                "no_warnings": True,
-                "progress_hooks": [self._progress_hook],
+                # point yt-dlp to the ffmpeg binary
                 "ffmpeg_location": get_ffmpeg_exe(),
+                # hook into our progress handler
+                "progress_hooks": [self._progress_hook],
             }
 
-            # 6) Do the download
-            self.log.emit(f"⏬ Download #{self.item.index}: {self.item.title} [{self.selected_format}]")
+            # 6) MP3 postprocessing (only if MP3 selected)
+            if selected == "mp3":
+                ydl_opts["postprocessors"] = [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    }
+                ]
+                # apply sample rate if provided
+                sr = getattr(self.item, 'sample_rate', None)
+                if sr:
+                    ydl_opts["postprocessor_args"] = ["-ar", str(sr)]
+
+            # 7) Start download
+            self.log.emit(f"⏬ Download #{self.item.index}: {self.item.title} [{selected}]")
             with YoutubeDL(ydl_opts) as ydl:
                 ydl.download([self.url])
 
-            # 7) Final cancellation check
+            # 8) Final cancellation check
             if self.isInterruptionRequested():
                 self.log.emit(f"⚠️ Download canceled #{self.item.index}")
                 self.finished.emit(self.index, "Canceled")
@@ -91,7 +116,6 @@ class DownloadWorker(QThread):
                 self.finished.emit(self.index, "Completed")
         finally:
             _download_semaphore.release()
-
 
     def _progress_hook(self, d):
         """
@@ -169,5 +193,4 @@ class DownloadManager(QObject):
         for w in self._workers:
             w.requestInterruption()
         # do NOT clear _workers here—let each one tear down in its own thread
-
 

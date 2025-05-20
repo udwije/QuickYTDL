@@ -1,18 +1,20 @@
 # quickytdl/ui/main_window.py
 
 import os
+import re
+
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QLineEdit, QComboBox, QPushButton,
-    QTableView, QFileDialog, QVBoxLayout, QHBoxLayout,
-    QTabWidget, QTextEdit, QLabel, QMessageBox,
-    QStyledItemDelegate, QHeaderView,
-    QStyleOptionProgressBar, QStyle, QApplication,
-    QStyleOptionButton, QStyleOptionViewItem, QCheckBox
+    QApplication, QCheckBox, QComboBox, QFileDialog, QHeaderView,
+    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar,
+    QPushButton, QStyledItemDelegate, QStyle, QStyleOptionButton,
+    QStyleOptionProgressBar, QStyleOptionViewItem, QTabWidget,
+    QTextEdit, QVBoxLayout, QWidget, QMainWindow, QTableView
 )
 from PyQt6.QtCore import (
-    pyqtSlot, Qt, QThread, QObject, pyqtSignal, QRect
+    Qt, QThread, QUrl, QRect, pyqtSlot, pyqtSignal, QObject
 )
-from PyQt6.QtGui import QPainter, QIcon
+from PyQt6.QtGui import QDesktopServices, QPainter
+
 from quickytdl.models import PlaylistTableModel, DownloadTableModel
 from quickytdl.fetcher import PlaylistFetcher
 from quickytdl.manager import DownloadManager
@@ -21,7 +23,7 @@ from quickytdl.utils import ensure_directory
 
 
 class FormatDelegate(QStyledItemDelegate):
-    """Delegate to render a QComboBox in the 'Format' column per row."""
+    """Render a per-row QComboBox for selecting formats."""
     def createEditor(self, parent, option, index):
         combo = QComboBox(parent)
         item = index.model()._items[index.row()]
@@ -36,30 +38,27 @@ class FormatDelegate(QStyledItemDelegate):
 
 
 class ProgressBarDelegate(QStyledItemDelegate):
-    """Renders a progress bar with centered percentage text (ignores any trailing speed text)."""
+    """Render a centered progress bar (percentage only)."""
     def paint(self, painter: QPainter, option, index):
-        # 1) Grab the display string from the model, e.g. "42% 1.2MiB/s"
         raw = index.data(Qt.ItemDataRole.DisplayRole) or ""
-        # 2) Extract the leading integer percentage
+        # parse leading percentage
         try:
-            token = raw.split()[0]               # first token, e.g. "42%"
+            token = raw.split()[0]
             if token.endswith('%'):
-                token = token[:-1]
-            value = int(token)
+                value = int(token[:-1])
+            else:
+                value = int(token)
         except Exception:
             value = 0
 
-        # 3) Configure the progress‐bar style option
         opt = QStyleOptionProgressBar()
         opt.rect = option.rect
-        opt.minimum = 0
-        opt.maximum = 100
+        opt.minimum, opt.maximum = 0, 100
         opt.progress = value
         opt.text = f"{value}%"
         opt.textVisible = True
         opt.textAlignment = Qt.AlignmentFlag.AlignCenter
 
-        # 4) Draw it
         painter.save()
         QApplication.style().drawControl(
             QStyle.ControlElement.CE_ProgressBar, opt, painter
@@ -68,7 +67,10 @@ class ProgressBarDelegate(QStyledItemDelegate):
 
 
 class CheckBoxHeader(QHeaderView):
-    """Draws a checkbox in column-0’s header and emits toggled(bool)."""
+    """
+    Draw a clickable checkbox in column-0’s header.
+    Emits toggled(bool) when clicked.
+    """
     toggled = pyqtSignal(bool)
 
     def __init__(self, orientation, parent=None):
@@ -88,18 +90,17 @@ class CheckBoxHeader(QHeaderView):
                 rect.y() + (rect.height() - size.height()) // 2,
                 size.width(), size.height()
             )
-            opt.state = (
-                QStyle.StateFlag.State_Enabled
-                | (QStyle.StateFlag.State_On if self._isChecked
-                   else QStyle.StateFlag.State_Off)
+            opt.state = QStyle.StateFlag.State_Enabled
+            opt.state |= (
+                QStyle.StateFlag.State_On
+                if self._isChecked else QStyle.StateFlag.State_Off
             )
             self.style().drawControl(
-               QStyle.ControlElement.CE_CheckBox, opt, painter
-           )
+                QStyle.ControlElement.CE_CheckBox, opt, painter
+            )
 
     def mousePressEvent(self, event):
-        col = self.logicalIndexAt(event.pos())
-        if col == 0:
+        if self.logicalIndexAt(event.pos()) == 0:
             self._isChecked = not self._isChecked
             self.toggled.emit(self._isChecked)
             self.updateSection(0)
@@ -108,7 +109,13 @@ class CheckBoxHeader(QHeaderView):
 
 
 class FetchWorker(QObject):
-    """Offloads playlist metadata fetching into its own thread."""
+    """
+    Worker to fetch playlist metadata in its own thread.
+    Emits:
+      - finished(list_of_items)
+      - error(str)
+      - log(str)
+    """
     fetch_request = pyqtSignal(str)
     finished      = pyqtSignal(list)
     error         = pyqtSignal(str)
@@ -117,239 +124,246 @@ class FetchWorker(QObject):
     def __init__(self, fetcher: PlaylistFetcher):
         super().__init__()
         self.fetcher = fetcher
-        self.fetch_request.connect(
-            self._on_fetch, Qt.ConnectionType.QueuedConnection
-        )
+        self.fetch_request.connect(self._on_fetch, Qt.ConnectionType.QueuedConnection)
         self.fetcher.log.connect(self.log)
 
     @pyqtSlot(str)
     def _on_fetch(self, url: str):
+        """Triggered when fetch_request is emitted."""
         try:
             items = self.fetcher.fetch_playlist(url)
             self.finished.emit(items)
         except Exception as e:
             self.error.emit(str(e))
         finally:
-            # once fetch is done (or errors), exit this thread's event loop
             QThread.currentThread().quit()
 
+
 class MainWindow(QMainWindow):
+    """Main application window for QuickYTDL."""
     def __init__(self):
         super().__init__()
-        # ── set application icon ───────────────────────────────────────
-        # resource path from your compiled resources_rc.py
-        #self.setWindowIcon(QIcon(":/QuickYTDL.ico"))
+
+        # ── Window setup ───────────────────────────────────────
         self.setWindowTitle("QuickYTDL")
         self.resize(1000, 700)
-        self.statusBar().showMessage("Ready")
 
-        # ── Load settings ─────────────────────────────────────────
+        # ── Status bar: progress + open-folder button ──────────
+        self.sb_progress = QProgressBar()
+        self.sb_progress.setVisible(False)
+        self.statusBar().addPermanentWidget(self.sb_progress)
+
+        self.openFolderBtn = QPushButton("Open Download Folder")
+        self.openFolderBtn.setVisible(False)
+        self.openFolderBtn.clicked.connect(self._open_download_dir)
+        self.statusBar().addPermanentWidget(self.openFolderBtn)
+
+        # ── Load settings ──────────────────────────────────────
         self.config = ConfigManager()
         self.config.load()
         if not os.path.isdir(self.config.default_save_dir):
             self._prompt_for_default_folder()
 
-        # ── Core components ───────────────────────────────────────
+        # ── Core components ───────────────────────────────────
         self.fetcher = PlaylistFetcher()
         self.manager = DownloadManager()
 
-        # ── Data models ───────────────────────────────────────────
+        # ── Data models ───────────────────────────────────────
         self.fetchModel    = PlaylistTableModel([])
         self.downloadModel = DownloadTableModel([])
 
-        # ── Build UI + hook signals ───────────────────────────────
+        # ── Build UI + wire signals ───────────────────────────
         self._build_ui()
         self._connect_signals()
 
-        # restore auto-shutdown checkbox
+        # restore auto-shutdown checkbox state
         self.autoShutdownChk.setChecked(self.config.auto_shutdown)
 
-        # placeholders for fetch thread/worker
+        # ── Input validation ──────────────────────────
+        # Disable buttons until valid inputs
+        self.fetchBtn.setEnabled(False)
+        self.downloadBtn.setEnabled(False)
+        # Enable Fetch only when URL is non-empty & well-formed
+        self.urlEdit.textChanged.connect(self._update_fetch_button_state)
+        # Enable Download whenever selection changes
+        self.fetchModel.dataChanged.connect(lambda *_: self._update_download_button_state())
+        self.fetchHeader.toggled.connect(lambda _: self._update_download_button_state())
+
+        # placeholders for fetch thread & worker
         self._fetch_thread = None
         self._fetch_worker = None
 
     def _build_ui(self):
+        """Construct all widgets and layouts."""
         central = QWidget()
         self.setCentralWidget(central)
         vbox = QVBoxLayout(central)
 
+        # ── Tabs container ────────────────────────────────────
         self.tabs = QTabWidget()
         vbox.addWidget(self.tabs)
 
-        # --- Main Download Tab ---
+        # --- Tab: QuickYTDL Main ---
         tab_main = QWidget()
-        ml = QVBoxLayout(tab_main)
+        main_layout = QVBoxLayout(tab_main)
 
-        # URL + Fetch button
+        # URL input + Fetch button
         h1 = QHBoxLayout()
-        self.urlEdit  = QLineEdit()
+        self.urlEdit = QLineEdit()
         self.urlEdit.setPlaceholderText("Playlist URL")
         self.fetchBtn = QPushButton("Fetch")
         h1.addWidget(self.urlEdit)
         h1.addWidget(self.fetchBtn)
-        ml.addLayout(h1)
+        main_layout.addLayout(h1)
 
-        # Fetched-playlist table
+        # Playlist table with header-checkbox
         self.fetchTable = QTableView()
         self.fetchTable.setModel(self.fetchModel)
-
-        # ── install a single header‐checkbox in column 0 ─────────────────
         header = CheckBoxHeader(Qt.Orientation.Horizontal, self.fetchTable)
         self.fetchTable.setHorizontalHeader(header)
-        self.fetchHeader = header  # keep a reference so we can reset it later
-        header.toggled.connect(self.on_select_all)  # emit True/False on clicks
+        self.fetchHeader = header
+        header.toggled.connect(self.on_select_all)
 
-        # disable built-in edits; we handle selection clicks manually
-        self.fetchTable.setEditTriggers(
-            QTableView.EditTrigger.NoEditTriggers
-        )
+        self.fetchTable.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
         self.fetchTable.clicked.connect(self.on_fetch_table_clicked)
+        self.fetchTable.setItemDelegateForColumn(3, FormatDelegate(self.fetchTable))
 
-        # per-row Format dropdown
-        self.fetchTable.setItemDelegateForColumn(
-            3, FormatDelegate(self.fetchTable)
-        )
+        for col, mode in enumerate([
+            QHeaderView.ResizeMode.Interactive,
+            QHeaderView.ResizeMode.Interactive,
+            QHeaderView.ResizeMode.Stretch,
+            QHeaderView.ResizeMode.Interactive
+        ]):
+            header.setSectionResizeMode(col, mode)
 
-        # dynamic column widths
-        hdr = header
-        hdr.setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Interactive
-        )
-        hdr.setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Interactive
-        )
-        hdr.setSectionResizeMode(
-            2, QHeaderView.ResizeMode.Stretch
-        )
-        hdr.setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Interactive
-        )
-        ml.addWidget(self.fetchTable)
+        main_layout.addWidget(self.fetchTable)
 
-        # Save-location + Global Format + controls
+        # Save location, global format controls
         hl2 = QHBoxLayout()
         hl2.addWidget(QLabel("Save Location:"))
-        self.saveEdit  = QLineEdit(self.config.default_save_dir)
+        self.saveEdit = QLineEdit(self.config.default_save_dir)
         self.browseBtn = QPushButton("Browse")
         hl2.addWidget(self.saveEdit)
         hl2.addWidget(self.browseBtn)
 
         self.formatCombo = QComboBox()
-        self.formatCombo.addItems(
-            ["1080p", "720p", "480p", "360p"]
-        )
-        self.formatCombo.setStyleSheet(
-            "background-color: #c8e6c9;"
-        )
+        self.formatCombo.addItems(["1080p", "720p", "480p", "360p", "mp3"])
         hl2.addWidget(QLabel("Global Format:"))
         hl2.addWidget(self.formatCombo)
 
+        hl2.addWidget(QLabel("SR (Hz):"))
+        self.srCombo = QComboBox()
+        self.srCombo.addItems(["44100", "48000"])
+        self.srCombo.setEnabled(False)
+        hl2.addWidget(self.srCombo)
+
         self.downloadBtn = QPushButton("Download")
-        self.cancelBtn   = QPushButton("Cancel")
+        self.cancelBtn = QPushButton("Cancel")
         hl2.addWidget(self.downloadBtn)
         hl2.addWidget(self.cancelBtn)
-        ml.addLayout(hl2)
+
+        main_layout.addLayout(hl2)
 
         # Download status table
         self.downloadTable = QTableView()
         self.downloadTable.setModel(self.downloadModel)
         self.downloadTable.hideColumn(2)  # hide per-row format
-
-        # progress‐bar delegate
-        self.downloadTable.setItemDelegateForColumn(
-            3, ProgressBarDelegate(self.downloadTable)
-        )
+        self.downloadTable.setItemDelegateForColumn(3, ProgressBarDelegate(self.downloadTable))
 
         dl_hdr = self.downloadTable.horizontalHeader()
-        dl_hdr.setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Interactive
-        )
-        dl_hdr.setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch
-        )
-        dl_hdr.setSectionResizeMode(
-            2, QHeaderView.ResizeMode.Fixed
-        )
-        dl_hdr.setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch
-        )
-        dl_hdr.setSectionResizeMode(
-            4, QHeaderView.ResizeMode.Interactive
-        )
-        ml.addWidget(self.downloadTable)
+        for col, mode in enumerate([
+            QHeaderView.ResizeMode.Interactive,
+            QHeaderView.ResizeMode.Stretch,
+            QHeaderView.ResizeMode.Fixed,
+            QHeaderView.ResizeMode.Stretch,
+            QHeaderView.ResizeMode.Interactive
+        ]):
+            dl_hdr.setSectionResizeMode(col, mode)
 
+        main_layout.addWidget(self.downloadTable)
         self.tabs.addTab(tab_main, "QuickYTDL")
 
-        # --- Complete Log Tab ---
+        # --- Tab: Complete Log ---
         tab_log = QWidget()
-        ll = QVBoxLayout(tab_log)
+        log_layout = QVBoxLayout(tab_log)
         self.logView = QTextEdit()
         self.logView.setReadOnly(True)
-        ll.addWidget(self.logView)
+        log_layout.addWidget(self.logView)
         self.tabs.addTab(tab_log, "Complete Log")
 
-        # --- Options Tab ---
+        # --- Tab: Options ---
         tab_opt = QWidget()
-        ol = QVBoxLayout(tab_opt)
+        opt_layout = QVBoxLayout(tab_opt)
         self.autoShutdownChk = QCheckBox("Auto shutdown when complete")
-        ol.addWidget(self.autoShutdownChk)
+        opt_layout.addWidget(self.autoShutdownChk)
 
         hl3 = QHBoxLayout()
         hl3.addWidget(QLabel("Default Save Location:"))
-        self.defSaveEdit  = QLineEdit(
-            self.config.default_save_dir
-        )
+        self.defSaveEdit = QLineEdit(self.config.default_save_dir)
         self.defBrowseBtn = QPushButton("Browse")
         hl3.addWidget(self.defSaveEdit)
         hl3.addWidget(self.defBrowseBtn)
-        ol.addLayout(hl3)
+        opt_layout.addLayout(hl3)
         self.tabs.addTab(tab_opt, "Options")
 
     def _connect_signals(self):
-        # Fetch
+        """Hook up all button clicks, model signals, and manager events."""
+        # Fetch workflow
         self.fetchBtn.clicked.connect(self.on_fetch_clicked)
+        self.fetcher.log.connect(self.logView.append)
+        self.fetcher.log.connect(self._on_log_message)
 
-        # Browse
+        # Browse dialogs
         self.browseBtn.clicked.connect(self.on_browse_save)
         self.defBrowseBtn.clicked.connect(self.on_browse_default)
 
-        # Download / Cancel
+        # Download controls
         self.downloadBtn.clicked.connect(self.on_download_clicked)
         self.cancelBtn.clicked.connect(self.on_cancel_clicked)
-
-        # Auto-shutdown
-        self.autoShutdownChk.stateChanged.connect(
-            self.on_auto_shutdown_changed
+        self.formatCombo.currentTextChanged.connect(
+            lambda fmt: self.srCombo.setEnabled(fmt == "mp3")
         )
-        # now also include speed & eta
-        # Download progress & completion (5-arg progress hook: idx, pct, status, speed, eta)
-        # this slot will also update the status bar with speed & ETA
         self.manager.progress.connect(self.on_download_progress)
         self.manager.finished.connect(self.on_download_finished)
-        self.manager.log.connect(self.logView.append)
+
+        # Auto-shutdown option
+        self.autoShutdownChk.stateChanged.connect(self.on_auto_shutdown_changed)
 
     def _prompt_for_default_folder(self):
+        """Alert + ask user to select a valid default save directory."""
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Icon.Warning)
         msg.setWindowTitle("Cannot Create Default Folder")
-        msg.setText(
-            f"Unable to create:\n{self.config.default_save_dir}"
-        )
+        msg.setText(f"Unable to create:\n{self.config.default_save_dir}")
         msg.exec()
         fallback = QFileDialog.getExistingDirectory(
-            self, "Select Default Save Directory",
-            os.path.expanduser("~")
+            self, "Select Default Save Directory", os.path.expanduser("~")
         )
         if fallback:
             self.config.default_save_dir = fallback
             ensure_directory(fallback)
             self.config.save()
 
+    def _update_fetch_button_state(self):
+        """Enable Fetch only when URL is non-empty and valid."""
+        txt = self.urlEdit.text().strip()
+        ok = bool(txt) and QUrl(txt).isValid()
+        self.fetchBtn.setEnabled(ok)
+
+    def _update_download_button_state(self):
+        """Enable Download when ≥1 playlist item is selected."""
+        has_sel = bool(self.fetchModel.get_selected_items())
+        self.downloadBtn.setEnabled(has_sel)
+        
+
+    # ── Slot implementations for fetch/download workflows ───────────────────────────
+
     @pyqtSlot()
     def on_fetch_clicked(self):
-        # If a fetch is already running, cancel it & clear table/log
+        """Start or restart playlist metadata fetch."""
         if self._fetch_thread:
             self._cleanup_fetch_thread()
+
         self.fetchModel.set_items([])
         self.logView.clear()
 
@@ -359,72 +373,66 @@ class MainWindow(QMainWindow):
 
         self.fetchBtn.setEnabled(False)
 
-        # start fetch worker
+        # Spin up worker thread
         self._fetch_thread = QThread(self)
         self._fetch_worker = FetchWorker(self.fetcher)
         self._fetch_worker.moveToThread(self._fetch_thread)
 
-        # signals
+        # Wire signals
         self._fetch_worker.finished.connect(self._handle_fetch_done)
         self._fetch_worker.error.connect(self._handle_fetch_error)
-        self._fetch_worker.log.connect(self.logView.append)
+        #self._fetch_worker.log.connect(self.logView.append)
         self._fetch_thread.finished.connect(self._cleanup_fetch_thread)
 
-        # fire
         self._fetch_thread.start()
         self._fetch_worker.fetch_request.emit(url)
 
-        # default to all selected: set header state + select all rows
+        # pre-check all rows
         self.fetchHeader._isChecked = True
         self.fetchHeader.updateSection(0)
         self.on_select_all(True)
 
     @pyqtSlot(list)
     def _handle_fetch_done(self, items: list):
+        """Populate table, set save path, and color-code global format."""
         self.fetchBtn.setEnabled(True)
         self.fetchModel.set_items(items)
 
-        # automatically pick subfolder named after playlist
-        # under user’s default save dir
         title = self.fetcher.last_playlist_title or ""
         base = os.path.join(self.config.default_save_dir, title)
         ensure_directory(base)
         self.saveEdit.setText(base)
 
-        # Apply global format to each item
         fmt = self.formatCombo.currentText()
         for it in items:
             it.selected = True
             if fmt in it.available_formats:
                 it.selected_format = fmt
 
-        #  ── color-code the Global Format combo: green if supported by EVERY video
-        # (drive intersection off of the first set to avoid unbound method issues)
+        # color-code formats: green=available in all, red=not
         if items:
             common = set(items[0].available_formats)
             for it in items[1:]:
                 common &= set(it.available_formats)
         else:
             common = set()
-        combo_model = self.formatCombo.model()
+
+        model = self.formatCombo.model()
         for idx in range(self.formatCombo.count()):
             f = self.formatCombo.itemText(idx)
-            clr = Qt.GlobalColor.green if f in common else Qt.GlobalColor.red
-            combo_model.setData(combo_model.index(idx, 0),
-                                clr,
-                                Qt.ItemDataRole.ForegroundRole)
+            color = Qt.GlobalColor.green if f in common else Qt.GlobalColor.red
+            model.setData(model.index(idx, 0), color, Qt.ItemDataRole.ForegroundRole)
 
-        # refresh table view
+        # trigger a full table refresh
         if items:
             top = self.fetchModel.index(0, 0)
             bot = self.fetchModel.index(
-                self.fetchModel.rowCount()-1,
-                self.fetchModel.columnCount()-1
+                self.fetchModel.rowCount() - 1,
+                self.fetchModel.columnCount() - 1
             )
             self.fetchModel.dataChanged.emit(
                 top, bot,
-                [Qt.ItemDataRole.CheckStateRole,
-                 Qt.ItemDataRole.EditRole]
+                [Qt.ItemDataRole.CheckStateRole, Qt.ItemDataRole.EditRole]
             )
 
     @pyqtSlot(str)
@@ -433,6 +441,7 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Fetch Error", message)
 
     def _cleanup_fetch_thread(self):
+        """Tear down fetch thread & worker to avoid leaks."""
         if self._fetch_worker:
             self._fetch_worker.deleteLater()
         if self._fetch_thread:
@@ -444,6 +453,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def on_browse_save(self):
+        """Choose where to save downloads."""
         d = QFileDialog.getExistingDirectory(
             self, "Select Save Directory", self.saveEdit.text()
         )
@@ -452,6 +462,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def on_browse_default(self):
+        """Choose default save directory in Options tab."""
         d = QFileDialog.getExistingDirectory(
             self, "Select Default Save Directory", self.defSaveEdit.text()
         )
@@ -463,38 +474,43 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(int)
     def on_auto_shutdown_changed(self, state):
-        self.config.auto_shutdown = (
-            state == Qt.CheckState.Checked
-        )
+        """Persist auto-shutdown setting."""
+        self.config.auto_shutdown = (state == Qt.CheckState.Checked)
         self.config.save()
 
     @pyqtSlot()
     def on_download_clicked(self):
-        # lock out UI during download
-        self.fetchBtn.setEnabled(False)
-        self.urlEdit.setEnabled(False)
-        self.browseBtn.setEnabled(False)
+        """Begin downloads, lock UI controls."""
         self.downloadBtn.setEnabled(False)
+        for w in (
+            self.fetchBtn, self.urlEdit, self.saveEdit,
+            self.browseBtn, self.formatCombo, self.srCombo
+        ):
+            w.setEnabled(False)
+        self.cancelBtn.setEnabled(True)
 
         sel = self.fetchModel.get_selected_items()
         if not sel:
             return
 
-        save_dir = (
-            self.saveEdit.text().strip()
-            or self.config.default_save_dir
-        )
-        ensure_directory(save_dir)
+        fmt = self.formatCombo.currentText()
+        sr = int(self.srCombo.currentText()) if fmt == "mp3" else None
+        for it in sel:
+            it.selected_format = fmt
+            setattr(it, 'sample_rate', sr)
+
+        save_dir = self.saveEdit.text().strip() or self.config.default_save_dir
         self.downloadModel.set_items(sel)
+        self.manager.last_download_dir = save_dir
         self.manager.start_downloads(sel, save_dir)
 
     @pyqtSlot()
     def on_cancel_clicked(self):
-        # 1) Stop any downloads in progress and clear that table
+        """Cancel all in-progress downloads and reset UI."""
         self.manager.cancel_all()
         self.downloadModel.set_items([])
 
-        # 2) Prevent any late fetch callbacks from touching our UI
+        # disconnect any pending fetch callbacks
         if self._fetch_worker:
             try:
                 self._fetch_worker.finished.disconnect(self._handle_fetch_done)
@@ -503,114 +519,143 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-        # 3) Clear the fetch table entirely
+        # clear playlist table + header state
         self.fetchModel.set_items([])
-
-        # 4) Reset the header‐checkbox back to “unchecked”
-        # reset header checkbox so future toggles always work
         self.fetchHeader._isChecked = False
         self.fetchHeader.updateSection(0)
 
-        # 5) Unblock every UI control so the user can start fresh
-        self.fetchBtn.setEnabled(True)
-        self.urlEdit.setEnabled(True)
-        self.browseBtn.setEnabled(True)
-        self.downloadBtn.setEnabled(True)
+        # restore controls
+        for w in (
+            self.fetchBtn, self.urlEdit, self.browseBtn,
+            self.downloadBtn, self.formatCombo, self.srCombo
+        ):
+            w.setEnabled(True)
+        #self.cancelBtn.setEnabled(False)
+
+        # restore browse button hookup
+        try:
+            self.browseBtn.clicked.disconnect(self._open_download_dir)
+        except TypeError:
+            pass
+        self.browseBtn.clicked.connect(self.on_browse_save)
+        self.browseBtn.setText("Browse")
 
     @pyqtSlot(int, float, str, str, str)
-    def on_download_progress(self,
-                             idx: int,
-                             pct: float,
-                             status: str,
-                             speed: str,
-                             eta: str):
+    def on_download_progress(self, idx: int, pct: float, status: str, speed: str, eta: str):
         """
-        DownloadWorker.progress(index, percent, status, speed, eta).
-        Updates the per‐row progress bar/status and shows speed & ETA
-        in the main window's status bar.
+        Update per-row progress bar & status bar with speed/ETA.
         """
-    # update the table cell (percent + optional “Merging” or “Downloading” text)
         self.downloadModel.update_progress(idx, pct, status)
-        # guard against any out-of-bounds idx
         if 0 <= idx < len(self.downloadModel._items):
-            # store speed & ETA on that item (if you need it later)
             item = self.downloadModel._items[idx]
             item.speed = speed
-            item.eta   = eta
+            item.eta = eta
 
-        self.statusBar().showMessage(
-             f"Video {idx+1} | Progress: {pct:4.0f}% | Speed: {speed:<8} | ETA: {eta}"
-         )
-        # build a fixed-width, column-aligned message
+        # fixed-width status message
         msg = (
             f"Video {idx+1:>3} | "
             f"Progress: {pct:>3.0f}% | "
-            f"Speed: {speed:>10} | "
+            f"Speed: {speed:<10} | "
             f"ETA: {eta:>5}"
         )
         self.statusBar().showMessage(msg)
 
-    @pyqtSlot(int, float, str, str, str)
-    def _show_speed_in_statusbar(self, idx: int, pct: float, status: str, speed: str, eta: str):
-        """
-        Show a summary of the current download speed & ETA
-        in the window’s status bar.
-        """
-        self.statusBar().showMessage(f"{pct:4.1f}% • {speed} • ETA {eta}")
+        if self.sb_progress.isVisible() and self.sb_progress.maximum() == 100:
+            self.sb_progress.setValue(int(pct))
 
     @pyqtSlot(int, str)
     def on_download_finished(self, idx: int, status: str):
+        """Handle one video finishing; when all are done, wrap up."""
         self.downloadModel.update_status(idx, status)
         statuses = self.downloadModel.get_statuses()
-        if all(s in ("Completed", "Skipped") for s in statuses):
-            # re-enable UI
-            self.fetchBtn.setEnabled(True)
-            self.urlEdit.setEnabled(True)
-            self.browseBtn.setEnabled(True)
-            self.downloadBtn.setEnabled(True)
-            # clear the status‐bar once done
-            self.statusBar().clearMessage()
-            if self.autoShutdownChk.isChecked():
-                if os.name == "nt":
-                    os.system("shutdown /s /t 60")
-                else:
-                    os.system("shutdown now")
+        if not all(s in ("Completed", "Skipped") for s in statuses):
+            return
+
+        # show final state
+        self.sb_progress.setVisible(False)
+        self.statusBar().showMessage("All downloads completed.")
+        self.browseBtn.setText("Open Directory")
+        try:
+            self.browseBtn.clicked.disconnect(self.on_browse_save)
+        except TypeError:
+            pass
+        self.browseBtn.clicked.connect(self._open_download_dir)
+
+        for w in (
+            self.fetchBtn, self.urlEdit, self.browseBtn,
+            self.saveEdit, self.formatCombo, self.srCombo
+        ):
+            w.setEnabled(True)
+        #self.cancelBtn.setEnabled(False)
+
+        if self.autoShutdownChk.isChecked():
+            if os.name == "nt":
+                os.system("shutdown /s /t 60")
+            else:
+                os.system("shutdown now")
 
     @pyqtSlot(bool)
     def on_select_all(self, checked: bool):
-        """Header checkbox toggled: select/deselect every row."""
-        state = (
-            Qt.CheckState.Checked
-            if checked else Qt.CheckState.Unchecked
-        )
+        """Toggle all rows’ checkboxes via the header checkbox."""
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
         for row in range(self.fetchModel.rowCount()):
             idx = self.fetchModel.index(row, 0)
-            self.fetchModel.setData(
-                idx, state,
-                Qt.ItemDataRole.CheckStateRole
-            )
+            self.fetchModel.setData(idx, state, Qt.ItemDataRole.CheckStateRole)
 
     @pyqtSlot("QModelIndex")
     def on_fetch_table_clicked(self, index):
-        """Toggle a single row when its checkbox cell is clicked."""
-        if index.column() == 0:
-            curr = self.fetchModel._items[index.row()].selected
-            new_st = (
-                Qt.CheckState.Checked
-                if not curr else Qt.CheckState.Unchecked
-            )
-            self.fetchModel.setData(
-                index, new_st,
-                Qt.ItemDataRole.CheckStateRole
-            )
+        """Toggle a single row’s selection when its checkbox cell is clicked."""
+        if index.column() != 0:
+            return
+        item = self.fetchModel._items[index.row()]
+        new_state = Qt.CheckState.Checked if not item.selected else Qt.CheckState.Unchecked
+        self.fetchModel.setData(index, new_state, Qt.ItemDataRole.CheckStateRole)
 
-    @pyqtSlot(int, float, str, str, str)
-    def _show_speed_in_statusbar(self, idx, pct, status, speed, eta):
+    @pyqtSlot(str)
+    def _on_log_message(self, message: str):
         """
-        Display a summary in the status bar like:
-           "42.3% at 120.5KiB/s  ETA 02:15"
+        Listen to fetcher.log and update status bar / sb_progress
+        according to key emojis and metadata progress markers.
         """
-        # you could also show total size if you had stored it on each item
-        self.statusBar().showMessage(
-            f"{pct:4.1f}% at {speed}  ETA {eta}"
+        text = message.strip()
+        # show key emoji messages
+        if text.startswith(("🔍", "🔎", "✅", "🚀", "⏬")):
+            self.statusBar().showMessage(text)
+
+        # fetch start → indeterminate
+        if text.startswith("🔍"):
+            self.sb_progress.setVisible(True)
+            self.sb_progress.setRange(0, 0)
+            return
+
+        # "[i/n]" progress → determinate
+        m = re.search(r"\[(\d+)/(\d+)\]", text)
+        if m:
+            current, total = map(int, m.groups())
+            pct = int(current / total * 100)
+            self.sb_progress.setVisible(True)
+            self.sb_progress.setRange(0, 100)
+            self.sb_progress.setValue(pct)
+            return
+
+        # found total count → hide
+        if text.startswith("🔎"):
+            self.sb_progress.setVisible(False)
+            return
+
+        # metadata done → hide
+        if text.startswith("✅") and "metadata" in text.lower():
+            self.sb_progress.setVisible(False)
+            return
+
+        # download phase start → hide
+        if text.startswith("🚀"):
+            self.sb_progress.setVisible(False)
+            return
+
+    @pyqtSlot()
+    def _open_download_dir(self):
+        """Open the last download folder in the system file manager."""
+        QDesktopServices.openUrl(
+            QUrl.fromLocalFile(self.manager.last_download_dir)
         )
