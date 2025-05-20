@@ -101,5 +101,4 @@ Use responsibly and at your own risk.
 
 ## 🙏 Acknowledgements
 
-> 💡Built with Python, yt-dlp, and PyQt6.
-> 💡Powered by community contributions and AI-assisted development.
+> 💡Built with Python, yt-dlp, and PyQt6. Powered by community contributions and AI-assisted development.
