@@ -41,7 +41,7 @@ class PlaylistFetcher(QObject):
             'skip_download': True,
             'no_warnings': True,
             #'extract_flat': 'in_playlist',  # list entries without full metadata
-            'extract_flat': True,  # list entries without full metadata
+            'extract_flat': True,  
         }
         # default fallback formats if detailed formats unavailable
         self.default_formats = ["1080p", "720p", "480p", "360p"]
@@ -72,7 +72,7 @@ class PlaylistFetcher(QObject):
             safe = safe[:19] + "…"
         self.last_playlist_title = safe
 
-        entries = info.get('entries') or []
+        entries = info.get('entries') or [info]
         total = len(entries)
         self.log.emit(f"🔎 Found {total} videos in playlist.")
 
@@ -87,35 +87,35 @@ class PlaylistFetcher(QObject):
             self.log.emit(f"  • Processing [{i}/{total}]: {title}")
 
             # Determine available formats if provided, else fallback
-            formats = entry.get('formats', None)
-            if formats and isinstance(formats, list):
-                # extract unique heights, e.g. 1080p, 720p
-                heights = {
-                    f"{fmt['height']}p"
-                    for fmt in formats
-                    if fmt.get('height') is not None
-                }
-                available_formats = sorted(
-                    heights,
-                    key=lambda s: int(s.rstrip('p')),
-                    reverse=True
-                )
-                if not available_formats:
-                    self.log.emit("    – No video formats found, using defaults.")
-                    available_formats = self.default_formats.copy()
-            else:
-                # flat extractor does not include formats
-                available_formats = self.default_formats.copy()
-                self.log.emit("    – Using default format list.")
-
+            formats = entry.get('formats', [])
+            available_formats = set()
+            if isinstance(formats, list):
+                # pick out mp4‐video formats by height
+                for fmt in formats:
+                    height = fmt.get('height')
+                    ext    = fmt.get('ext')
+                    if height and ext == 'mp4':
+                        available_formats.add(f"{height}p")
+            if not available_formats:
+                self.log.emit("    – No MP4 formats found, using defaults.")
+                available_formats = set(self.default_formats)
+            # sort descending (e.g. 1080p, 720p…)
+            available_formats = sorted(
+                available_formats,
+                key=lambda s: int(s.rstrip('p')),
+                reverse=True
+            )
+            # always allow mp3 audio
+            if "mp3" not in available_formats:
+                available_formats.append("mp3")
             # Pick the best URL field for download
             video_url = entry.get('webpage_url') or entry.get('id')
             item = VideoItem(i, title, available_formats, video_url)
             items.append(item)
 
-            self.log.emit(
-                f"    – Formats: {', '.join(available_formats)}"
-            )
+            # Now log the formats for this video
+            self.log.emit(f"    – Formats: {', '.join(available_formats)}")
+
 
         self.log.emit(f"✅ Completed metadata for {len(items)} videos.\n")
         return items

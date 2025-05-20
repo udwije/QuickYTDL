@@ -235,15 +235,22 @@ class MainWindow(QMainWindow):
         hl2.addWidget(self.browseBtn)
 
         self.formatCombo = QComboBox()
-        self.formatCombo.addItems(
-            ["1080p", "720p", "480p", "360p"]
-        )
-        self.formatCombo.setStyleSheet(
-            "background-color: #c8e6c9;"
-        )
+        self.formatCombo.addItems([
+            "1080p", "720p", "480p", "360p", "mp3"  # ✅ added mp3
+        ])
+        #self.formatCombo.setStyleSheet("background-color: #c8e6c9;")
+
         hl2.addWidget(QLabel("Global Format:"))
         hl2.addWidget(self.formatCombo)
-
+        hl2.addWidget(QLabel("Global Format:"))
+        hl2.addWidget(self.formatCombo)
+        # ── sample-rate selector (MP3 only) ──────────────────────────────────
+        hl2.addWidget(QLabel("SR (Hz):"))
+        self.srCombo = QComboBox()
+        self.srCombo.addItems(["44100", "48000"])
+        self.srCombo.setEnabled(False)
+        hl2.addWidget(self.srCombo)
+        
         self.downloadBtn = QPushButton("Download")
         self.cancelBtn   = QPushButton("Cancel")
         hl2.addWidget(self.downloadBtn)
@@ -315,6 +322,10 @@ class MainWindow(QMainWindow):
 
         # Download / Cancel
         self.downloadBtn.clicked.connect(self.on_download_clicked)
+        # enable SR dropdown only when MP3 is chosen
+        self.formatCombo.currentTextChanged.connect(
+            lambda fmt: self.srCombo.setEnabled(fmt == "mp3")
+        )
         self.cancelBtn.clicked.connect(self.on_cancel_clicked)
 
         # Auto-shutdown
@@ -477,6 +488,10 @@ class MainWindow(QMainWindow):
         self.downloadBtn.setEnabled(False)
 
         sel = self.fetchModel.get_selected_items()
+        # attach sample_rate attribute for MP3
+        sr = int(self.srCombo.currentText()) if self.formatCombo.currentText() == "mp3" else None
+        for it in sel:
+            setattr(it, 'sample_rate', sr)
         if not sel:
             return
 
