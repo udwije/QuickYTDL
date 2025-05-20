@@ -5,6 +5,12 @@ Download single videos or entire playlists in your choice of resolution or MP3, 
 
 ---
 
+
+https://github.com/user-attachments/assets/dfb8a41d-1fdb-42f0-8f00-9339aa161b22
+
+
+---
+
 ## 📢 New in v1.2.0 (Audio Branch)
 
 - **MP3 Download Support**  
