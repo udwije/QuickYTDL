@@ -91,11 +91,22 @@ pyinstaller --onefile --windowed \
   main.py
 ```
 ---
+## ⚠️ Disclaimer
+
+* Use at your own risk. This software is provided “as-is”, without warranties or guarantees.
+* Respect YouTube’s Terms of Service. Only download content you own or have permission to use.
+* Bypassing certain protections may be restricted in your jurisdiction—please verify before use.
+  
+---
 
 ## 📄 License
 
 This project is released under the GPL-3.0 license.
-Use responsibly and at your own risk.
+
+# Dependencies & Their Licenses
+  * yt-dlp — Unlicense
+  * imageio-ffmpeg — BSD 3-Clause
+Please carry forward their respective license notices if you redistribute.
 
 ---
 
