@@ -48,19 +48,24 @@ class DownloadWorker(QThread):
                 self.finished.emit(self.index, "Failed")
                 return
 
-            # 3) Build exact format string based on user choice
+           # 3) Build format string based on user choice
             selected = self.selected_format
             if selected == "mp3":
+                # audio‐only
                 fmt = "bestaudio/best"
+
             elif selected in ["1080p", "720p", "480p", "360p"]:
+                # exact MP4 @HEIGHT + best M4A audio,
+                # fallback to <=HEIGHT MP4+M4A, then any MP4
                 height = int(selected.rstrip("p"))
-                # MP4 video at exact height + M4A audio, fallback to ≤height then any MP4
                 fmt = (
-                    f"bestvideo[height={height}][ext=mp4]+bestaudio[ext=m4a]/"
+                   f"bestvideo[height={height}][ext=mp4]+bestaudio[ext=m4a]/"
                     f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/"
                     f"best[ext=mp4]"
                 )
+
             else:
+                # last‐resort
                 fmt = "best"
 
             # 4) Safe output template
@@ -71,25 +76,28 @@ class DownloadWorker(QThread):
             )
             os.makedirs(os.path.dirname(outtmpl), exist_ok=True)
 
-            # 5) YDL opts (include embedded ffmpeg)
+            # 5) YDL opts (embed the bundled FFmpeg and enable progress hooks)
             from imageio_ffmpeg import get_ffmpeg_exe
             ydl_opts = {
                 "format": fmt,
                 "outtmpl": outtmpl,
                 "quiet": True,
-                "no_warnings": True,
-                "progress_hooks": [self._progress_hook],
+                # point yt-dlp to the ffmpeg binary
                 "ffmpeg_location": get_ffmpeg_exe(),
+                # hook into our progress handler
+                "progress_hooks": [self._progress_hook],
             }
 
             # 6) MP3 postprocessing (only if MP3 selected)
             if selected == "mp3":
-                ydl_opts["postprocessors"] = [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }]
-                # apply sample rate from UI if provided
+                ydl_opts["postprocessors"] = [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    }
+                ]
+                # apply sample rate if provided
                 sr = getattr(self.item, 'sample_rate', None)
                 if sr:
                     ydl_opts["postprocessor_args"] = ["-ar", str(sr)]
@@ -185,5 +193,4 @@ class DownloadManager(QObject):
         for w in self._workers:
             w.requestInterruption()
         # do NOT clear _workers here—let each one tear down in its own thread
-
 

@@ -488,12 +488,15 @@ class MainWindow(QMainWindow):
         self.downloadBtn.setEnabled(False)
 
         sel = self.fetchModel.get_selected_items()
-        # attach sample_rate attribute for MP3
-        sr = int(self.srCombo.currentText()) if self.formatCombo.currentText() == "mp3" else None
-        for it in sel:
-            setattr(it, 'sample_rate', sr)
         if not sel:
             return
+
+        # override per-item format from global dropdown and attach sample rate
+        fmt = self.formatCombo.currentText()
+        sr = int(self.srCombo.currentText()) if fmt == "mp3" else None
+        for it in sel:
+            it.selected_format = fmt
+            setattr(it, 'sample_rate', sr)
 
         save_dir = (
             self.saveEdit.text().strip()
