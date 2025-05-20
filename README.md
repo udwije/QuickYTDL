@@ -1,25 +1,49 @@
-# QuickYTDL 🎬
+# QuickYTDL
 
-A fast, modern, open-source Playlist downloader with a sleek PyQt6 GUI.  
-Supports single videos & full playlists, per-item format selection, global format presets, real-time progress (with speed & ETA), auto-shutdown, and more.
-
-> 💡 Built with Python, `yt-dlp`, and PyQt6. Powered by AI-assisted development.
-
-
-https://github.com/user-attachments/assets/2e66109c-18a6-47c3-a3a8-96ce3d35e865
+A fast, modern, open-source playlist and video downloader with a sleek PyQt6 GUI.  
+Download single videos or entire playlists in your choice of resolution or MP3, track per-item progress, and optionally shut down your machine when done.
 
 ---
 
-## 🚀 New in v1.1.0
+## 📢 New in v1.2.0 (Audio Branch)
 
-- ✅ **Per-playlist subfolder** — each download run creates its own folder (first 20 chars of playlist title)  
-- 🌐 **Global & per-video format** — set a default format for the entire batch, or override each row  
-- 🎛️ **Select / Deselect All** via a header checkbox  
-- 📊 **Live progress bar** with centered % text, plus **speed** (e.g. `1.2 MiB/s`) & **ETA** in the status bar  
-- ⚙️ **Auto-shutdown** option once all downloads finish  
-- 🛠️ **FFmpeg bundled** (via `imageio-ffmpeg`) for format merging — no external ffmpeg install needed  
-- 🖼️ **Custom app & taskbar icon** on Windows  
-- 📂 **Automatic default folder**: `~/Videos/QuickYTDL Downloads` (created if missing)  
+- **MP3 Download Support**  
+  Download playlists or individual videos as MP3 files.  
+
+- **Sample-Rate Selector**  
+  When “mp3” is chosen as the global format, choose between 44.1 kHz or 48 kHz.  
+
+- **Smarter Button States**  
+  - **URL Validation**  
+    The **Fetch** button is only enabled when the URL field contains a non-empty, valid URL.  
+  - **Download Enablement**  
+    The **Download** button becomes enabled as soon as at least one item is selected.  
+  - **Cancel Always Available**  
+    The **Cancel** button remains clickable at all times—so you can abort fetching or downloading in mid-stream.
+
+- **Cleaned-up Logging**  
+  Duplicate log entries in the **Complete Log** tab have been eliminated—every status message now appears only once.
+
+- **Improved UI Reliability**  
+  Under-the-hood refactors ensure no more “zombie” threads or dangling signal connections.
+
+---
+
+## 🔥 What’s Already in v1.1.0
+
+- ✅ **Per-Playlist Subfolder**  
+  Each download run creates its own folder named after the first 20 characters of the playlist title.  
+- ✅ **Global & Per-Video Format Overrides**  
+  Set a default format for the entire batch, or pick a different format for each row.  
+- ✅ **Select/Deselect All** via a header checkbox.  
+- ✅ **Live Progress Bars**  
+  Centered % text in each row, plus overall speed & ETA in the status bar.  
+- ⚙️ **Auto-Shutdown Option**  
+  Have your machine shut down when all downloads finish.  
+- 🎞️ **Bundled FFmpeg** (via `imageio-ffmpeg`)—no separate install required.  
+- 🖼️ **Custom App & Taskbar Icon** on Windows.  
+- 📂 **Automatic Default Folder**  
+  `~/Videos/QuickYTDL Downloads` is created if missing.
 
 ---
 
@@ -34,8 +58,13 @@ Grab the latest `.exe` from [Releases](https://github.com/udwije/QuickYTDL/relea
 ### Requirements
 
 - Python 3.9+  
-- `pip install -r requirements.txt`
+- `yt-dlp`  
+- PyQt6  
+- `imageio-ffmpeg`  
 
+```bash
+pip install -r requirements.txt
+```
 ### Generate resources
 
 ```bash
@@ -45,17 +74,24 @@ pyside6-rcc quickytdl/resources/resources.qrc -o quickytdl/resources_rc.py
 ```bash
 python main.py
 ```
+
+(Optional) Bundle into a Single Executable
 ```bash
 pyinstaller --onefile --windowed \
   --icon quickytdl/resources/QuickYTDL.ico \
   --add-data "path\to\imageio_ffmpeg;imageio_ffmpeg" \
   main.py
 ```
-
-## ⚖️ Legal Notice
-This tool is for personal & educational use only. The author is not responsible for misuse.
+---
 
 ## 📄 License
 
-GPL
+This project is released under the GPL-3.0 license.
+Use responsibly and at your own risk.
 
+---
+
+## 🙏 Acknowledgements
+
+Built with Python, yt-dlp, and PyQt6.
+Powered by community contributions and AI-assisted development.
