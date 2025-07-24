@@ -81,7 +81,6 @@ class ProgressBarDelegate(QStyledItemDelegate):
 
         painter.restore()
 
-
 class CheckBoxHeader(QHeaderView):
     """
     Draw a clickable checkbox in column-0’s header.
@@ -123,7 +122,6 @@ class CheckBoxHeader(QHeaderView):
         else:
             super().mousePressEvent(event)
 
-
 class FetchWorker(QObject):
     """
     Worker to fetch playlist metadata in its own thread.
@@ -154,10 +152,10 @@ class FetchWorker(QObject):
         finally:
             QThread.currentThread().quit()
 
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._allFetchedItems = []
         self.setWindowTitle("QuickYTDL")
         self.resize(1200, 800)
 
@@ -169,8 +167,6 @@ class MainWindow(QMainWindow):
         self.openFolderBtn.setVisible(False)
         self.openFolderBtn.clicked.connect(self._open_download_dir)
         self.statusBar().addPermanentWidget(self.openFolderBtn)
-
-        
 
         self.config = ConfigManager()
         self.config.load()
@@ -211,14 +207,34 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         vbox = QVBoxLayout(central)
 
+        # Wrap Fetch UI in a group box
+        self.fetchInputGroup = QGroupBox("Fetch Playlist")
+        fetch_input_layout = QHBoxLayout(self.fetchInputGroup)
         self.urlEdit = QLineEdit()
         self.urlEdit.setPlaceholderText("Playlist URL")
         self.fetchBtn = QPushButton("Fetch")
-        h1 = QHBoxLayout()
-        h1.addWidget(self.urlEdit)
-        h1.addWidget(self.fetchBtn)
-        vbox.addLayout(h1)
+        fetch_input_layout.addWidget(self.urlEdit)
+        fetch_input_layout.addWidget(self.fetchBtn)
+        vbox.addWidget(self.fetchInputGroup)
 
+        # Search option
+        """self.searchEdit = QLineEdit()
+        self.searchEdit.setPlaceholderText("Search playlist...")
+        self.searchEdit.setVisible(True)  # hide until fetched
+        self.searchEdit.textChanged.connect(self._filter_playlist)
+        vbox.addWidget(self.searchEdit)"""
+        self.searchGroup = QGroupBox("Search")
+        search_layout = QVBoxLayout(self.searchGroup)
+
+        self.searchEdit = QLineEdit()
+        self.searchEdit.setPlaceholderText("Search playlist...")
+        self.searchEdit.textChanged.connect(self._filter_playlist)
+
+        search_layout.addWidget(self.searchEdit)
+        self.searchGroup.setVisible(False)  # Hide initially
+        vbox.addWidget(self.searchGroup)
+
+        # Fetched Table
         self.fetchTable = QTableView()
         self.fetchTable.setModel(self.fetchModel)
         header = CheckBoxHeader(Qt.Orientation.Horizontal, self.fetchTable)
@@ -279,7 +295,8 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.downloadBtn)
         control_layout.addWidget(self.cancelBtn)
         vbox.addWidget(self.controlGroup)
-
+        
+        # Downloading Table
         self.downloadTable = QTableView()
         self.downloadTable.setModel(self.downloadModel)
         self.downloadTable.hideColumn(2)
@@ -293,7 +310,6 @@ class MainWindow(QMainWindow):
             QHeaderView.ResizeMode.Interactive
         ]):
             dl_hdr.setSectionResizeMode(col, mode)
-        #vbox.addWidget(self.downloadTable)
         self.download_group = QGroupBox("Download Progress")
         download_layout = QVBoxLayout(self.download_group)
         download_layout.addWidget(self.downloadTable)
@@ -379,7 +395,32 @@ class MainWindow(QMainWindow):
     def _show_download_view(self):
         self.fetch_group.setVisible(False)
         self.download_group.setVisible(True)
-        
+    
+    def _show_search_view(self):
+        self.searchGroup.setVisible(True)
+        self.fetchInputGroup.setVisible(False)
+
+    def _show_fetch_input_view(self):
+        self.searchGroup.setVisible(False)
+        self.fetchInputGroup.setVisible(True)
+
+
+    def _filter_playlist(self, text):
+        text = text.lower().strip()
+        #print("Search term:", text)
+        #print("Total items stored:", len(self._allFetchedItems))
+        if not text:
+            self.fetchModel.set_items(self._allFetchedItems)
+            return
+
+        filtered = []
+        for item in self._allFetchedItems:
+            #print("Checking:", item.title)
+            if text in item.title.lower():
+                filtered.append(item)
+
+        #print("Filtered items:", len(filtered))
+        self.fetchModel.set_items(filtered)
 
     # ── Slot implementations for fetch/download workflows ───────────────────────────
 
@@ -422,6 +463,9 @@ class MainWindow(QMainWindow):
     def _handle_fetch_done(self, items: list):
         """Populate table, set save path, and color-code global format."""
         self.fetchBtn.setEnabled(True)
+        self._allFetchedItems = items
+        self._show_search_view()
+        self.searchEdit.clear()
         self.fetchModel.set_items(items)
 
         title = self.fetcher.last_playlist_title or ""
@@ -568,6 +612,8 @@ class MainWindow(QMainWindow):
         self.browseBtn.clicked.connect(self.on_browse_save)
         self.browseBtn.setText("Browse")
         self._show_fetch_view()
+        self._show_fetch_input_view()
+
 
 
     @pyqtSlot(int, float, str, str, str)
@@ -617,6 +663,8 @@ class MainWindow(QMainWindow):
         ):
             w.setEnabled(True)
         #self.cancelBtn.setEnabled(False)
+        self._show_fetch_view()
+        self._show_fetch_input_view()
 
         if self.autoShutdownChk.isChecked():
             if os.name == "nt":
