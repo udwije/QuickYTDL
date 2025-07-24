@@ -35,41 +35,51 @@ class FormatDelegate(QStyledItemDelegate):
         model.setData(index, editor.currentText(), Qt.ItemDataRole.EditRole)
 
 class ProgressBarDelegate(QStyledItemDelegate):
-    """Render a cleaner text-based progress bar with ▓░ blocks, % center, and right-aligned speed/ETA."""
     def paint(self, painter: QPainter, option, index):
         raw = index.data(Qt.ItemDataRole.DisplayRole) or ""
-
-        # Parse expected format: "45% │ 3.2MB/s │ ETA 00:30"
-        parts = raw.split("│")
-        percent_str = parts[0].strip() if len(parts) > 0 else "0%"
-        speed = parts[1].strip() if len(parts) > 1 else ""
-        eta = parts[2].strip() if len(parts) > 2 else ""
+        parts = [p.strip() for p in raw.split("│")]
+        percent_str = parts[0] if len(parts) > 0 else "0%"
+        speed = parts[1] if len(parts) > 1 else ""
+        eta = parts[2] if len(parts) > 2 else ""
 
         try:
             percent = int(percent_str.rstrip('%'))
         except Exception:
             percent = 0
 
-        # Bar setup
-        total_blocks = 20
-        filled = int((percent / 100) * total_blocks)
-        empty = total_blocks - filled
-        bar = f"{'▓' * filled}{'░' * empty}"
-
-        # Compose full line
-        display_text = f"{bar} {percent:>3}%   {speed}   {eta}"
-
-        # Draw nicely aligned
         painter.save()
         painter.setFont(option.font)
+        metrics = painter.fontMetrics()
 
-        # Draw gray background for visual contrast (optional)
-        painter.fillRect(option.rect, option.palette.alternateBase())
+        # Calculate available width
+        rect = option.rect
+        text_info = f"{percent:3}% | {speed} | {eta}"
+        text_width = metrics.horizontalAdvance(text_info) + 20
+        bar_area_width = rect.width() - text_width - 10
 
-        # Draw the text
-        painter.drawText(option.rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, display_text)
+        block_width = metrics.horizontalAdvance("▓")
+        total_blocks = max(int(bar_area_width / block_width), 5)
+        filled_blocks = int((percent / 100) * total_blocks)
+        empty_blocks = total_blocks - filled_blocks
+
+        x = rect.x() + 5
+        y = rect.y() + (rect.height() + metrics.ascent() - metrics.descent()) // 2
+
+        # Draw filled blocks
+        painter.setPen(Qt.GlobalColor.green)
+        painter.drawText(x, y, "▓" * filled_blocks)
+        x += block_width * filled_blocks
+
+        # Draw empty blocks
+        painter.setPen(Qt.GlobalColor.lightGray)
+        painter.drawText(x, y, "░" * empty_blocks)
+        x += block_width * empty_blocks + 5
+
+        # Draw percent/speed/eta
+        painter.setPen(Qt.GlobalColor.black)
+        painter.drawText(x, y, f"{percent:3}% | {speed} | {eta}")
+
         painter.restore()
-
 
 
 class CheckBoxHeader(QHeaderView):
