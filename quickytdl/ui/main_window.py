@@ -315,7 +315,6 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.downloadBtn)
         control_layout.addWidget(self.cancelBtn)
         
-        
         # Downloading Table
         self.downloadTable = QTableView()
         self.downloadTable.setModel(self.downloadModel)
@@ -608,48 +607,54 @@ class MainWindow(QMainWindow):
         self.downloadModel.set_items(sel)
         self.manager.last_download_dir = save_dir
         self.manager.start_downloads(sel, save_dir)
+
         self._show_download_view()
 
+        # 🔄 Show indeterminate status bar while yt-dlp prepares
+        self.sb_progress.setVisible(True)
+        self.sb_progress.setRange(0, 0)  # Busy indicator
+        self.statusBar().showMessage("Preparing downloads…")
 
     @pyqtSlot()
     def on_cancel_clicked(self):
         """Cancel all in-progress downloads and reset UI."""
-        self.manager.cancel_all()
-        self.downloadModel.set_items([])
 
-        # disconnect any pending fetch callbacks
-        if self._fetch_worker:
-            try:
-                self._fetch_worker.finished.disconnect(self._handle_fetch_done)
-                self._fetch_worker.error.disconnect(self._handle_fetch_error)
-                self._fetch_worker.log.disconnect(self.logView.append)
-            except Exception:
-                pass
+        # 1. Reset fetch input state
+        self.urlEdit.clear()
+        self.fetchBtn.setEnabled(False)
+        self._show_fetch_input_view()
 
-        # clear playlist table + header state
+        # 2. Clear the fetched playlist table
         self.fetchModel.set_items([])
         self.fetchHeader._isChecked = False
         self.fetchHeader.updateSection(0)
 
-        # restore controls
+        # 3. Cancel all ongoing downloads
+        self.manager.cancel_all()
+        self.downloadModel.set_items([])
+
+        # 4. Restore default save directory
+        self.saveEdit.setText(self.config.default_save_dir)
+
+        # 5. Restore control state
         for w in (
             self.fetchBtn, self.urlEdit, self.browseBtn,
             self.downloadBtn, self.formatCombo, self.srCombo
         ):
             w.setEnabled(True)
-        #self.cancelBtn.setEnabled(False)
+        self.cancelBtn.setEnabled(False)
 
-        # restore browse button hookup
+        # 6. Disconnect the dynamic "Open Directory" button behavior
         try:
             self.browseBtn.clicked.disconnect(self._open_download_dir)
         except TypeError:
             pass
         self.browseBtn.clicked.connect(self.on_browse_save)
         self.browseBtn.setText("Browse")
-        self._show_fetch_view()
-        self._show_fetch_input_view()
 
-
+        # 7. Clear status bar and hide progress
+        self.statusBar().clearMessage()
+        self.sb_progress.setVisible(False)
 
     @pyqtSlot(int, float, str, str, str)
     def on_download_progress(self, idx: int, pct: float, status: str, speed: str, eta: str):
@@ -671,22 +676,38 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage(msg)
 
-        if self.sb_progress.isVisible() and self.sb_progress.maximum() == 100:
+        if self.sb_progress.isVisible():
+            if self.sb_progress.maximum() == 0:
+                # First real download progress → switch to determinate mode
+                self.sb_progress.setRange(0, 100)
             self.sb_progress.setValue(int(pct))
+
 
     @pyqtSlot(int, str)
     def on_download_finished(self, idx: int, status: str):
-        """Handle one video finishing; when all are done, wrap up and show summary."""
+        """Handle one video finishing; when all are done, wrap up."""
         self.downloadModel.update_status(idx, status)
-        statuses = self.downloadModel.get_statuses()
 
-        # Check if all are done (Completed, Skipped, Canceled, or Failed)
+        statuses = self.downloadModel.get_statuses()
         if not all(s in ("Completed", "Skipped", "Canceled", "Failed") for s in statuses):
             return
 
-        # Final UI state
+        # Count outcomes
+        counts = {"Completed": 0, "Skipped": 0, "Canceled": 0, "Failed": 0}
+        for s in statuses:
+            if s in counts:
+                counts[s] += 1
+
+        # 🧾 Compose summary
+        summary = (
+            f"✅ {counts['Completed']} completed  "
+            f"⚠️ {counts['Canceled']} canceled  "
+            f"❌ {counts['Failed']} failed"
+        )
+        self.statusBar().showMessage(summary)
+
+        # Restore UI
         self.sb_progress.setVisible(False)
-        self.statusBar().showMessage("All downloads completed.")
         self.browseBtn.setText("Open Directory")
         try:
             self.browseBtn.clicked.disconnect(self.on_browse_save)
@@ -703,23 +724,6 @@ class MainWindow(QMainWindow):
         self._show_fetch_view()
         self._show_fetch_input_view()
 
-        # ✅ Summary log message
-        completed = statuses.count("Completed")
-        canceled = statuses.count("Canceled")
-        failed = statuses.count("Failed")
-        skipped = statuses.count("Skipped")
-
-        summary = f"✅ {completed} completed"
-        if canceled:
-            summary += f" | ❌ {canceled} canceled"
-        if failed:
-            summary += f" | ⚠️ {failed} failed"
-        if skipped:
-            summary += f" | ⏭️ {skipped} skipped"
-
-        self._append_log(summary)
-
-        # Optional: Auto shutdown
         if self.autoShutdownChk.isChecked():
             if os.name == "nt":
                 os.system("shutdown /s /t 60")
