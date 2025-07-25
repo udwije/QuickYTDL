@@ -53,6 +53,13 @@ Download single videos or entire playlists in your choice of Video resolutions o
   - Updated default save folder logic with path validation
 
 ---
+<img width="1920" height="1030" alt="" src="https://github.com/user-attachments/assets/e133881a-8dc7-4bac-815f-3f8777a8dcfa" />
+<img width="1920" height="1030" alt="" src="https://github.com/user-attachments/assets/36074e02-78fe-472f-9a05-c11fa12eece0" />
+<img width="1920" height="1030" alt="" src="https://github.com/user-attachments/assets/fc1468b7-7a33-4613-aec4-063b2ab60021" />
+<img width="1920" height="1032" alt="" src="https://github.com/user-attachments/assets/4bf04dc7-9b37-4ded-8a43-de92d88352cf" />
+<img width="1920" height="1030" alt="" src="https://github.com/user-attachments/assets/d57d10e7-98d0-44bc-af85-4ab58a0d3994" />
+
+---
 
 ## 🔄 Changelog
 
