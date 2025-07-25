@@ -5,51 +5,91 @@ Download single videos or entire playlists in your choice of Video resolutions o
 
 ---
 
+## 🚀 Features (v1.3.0)
 
-https://github.com/user-attachments/assets/dfb8a41d-1fdb-42f0-8f00-9339aa161b22
+### 🎥 Playlist & Video Downloading
+- Download entire YouTube playlists or single videos
+- Choose from **1080p**, **720p**, **480p**, **360p**, or **MP3**
+- Global format selector + per-video format override
 
+### 💡 Enhanced UI & Experience
+- 🔍 **Real-time Playlist Search** with live filtering
+- ✅ **Select/Deselect All** via header checkbox
+- ⏬ **Parallel Downloads** with per-row progress
+- 📶 Live speed and ETA shown per download
+- ❌ **Cancel individual downloads** mid-process
+- 📄 **Log viewer** for fetch and download status
+- ⚙️ **Auto-shutdown** option after downloads
+
+### 📁 Workflow Features
+- 🗂️ Automatic subfolder creation using playlist title
+- 📂 Save path can be browsed or customized
+- 💾 User settings (default path, shutdown, etc.) persist via config
+- 🧠 Smart default folder fallback: `~/Videos/QuickYTDL Downloads`
 
 ---
 
-## 📢 New in v1.2.0 (Audio Branch)
+## 📢 New in v1.3.0
 
-- 🎵 **MP3 Download Support**  
-  Download playlists or individual videos as MP3 files.
+- 🆕 **Download Progress Redesign**  
+  - Live ETA, speed, and percentage using visually styled blocks  
+  - Per-row progress delegate with cancel button  
 
-- 🎚️ **Sample-Rate Selector**  
-  When “mp3” is chosen as the global format, choose between 44.1 kHz or 48 kHz.
+- 🧠 **Improved Search & Filter**  
+  - Toggle between URL input and search bar  
+  - Fuzzy title filtering based on keyword match  
 
-- 🤖 **Smarter Button States**  
-  - 🔗 **URL Validation**  
-    The **Fetch** button is only enabled when the URL field contains a non-empty, valid URL.  
-  - 🟢 **Download Enablement**  
-    The **Download** button becomes enabled as soon as at least one item is selected.  
-  - ❌ **Cancel Always Available**  
-    The **Cancel** button remains clickable at all times—so you can abort fetching or downloading mid-stream.
+- 📋 **Unified Signal Management**  
+  - Better thread lifecycle handling  
+  - Safer teardown for fetch/download threads  
 
-- 🗒️ **Cleaned-up Logging**  
-  Duplicate log entries in the **Complete Log** tab have been eliminated—every status message now appears only once.
+- 🧪 **Robust Configuration System**  
+  - Handles missing/malformed paths  
+  - Persists default save location and auto-shutdown preference  
 
-- 🛠️ **Improved UI Reliability**  
-  Under-the-hood refactors ensure no more “zombie” threads or dangling signal connections.
-  
+- 🖥️ **Clean UI Layouts**  
+  - Grouped controls with clear hierarchy  
+  - Icons for toggling log and advanced settings views  
+  - Updated default save folder logic with path validation
+
 ---
 
-## 🔥 What’s Already in v1.1.0
+## 🔄 Changelog
 
-- ✅ **Per-Playlist Subfolder**  
-  Each download run creates its own folder named after the first 20 characters of the playlist title.  
-- ✅ **Global & Per-Video Format Overrides**  
-  Set a default format for the entire batch, or pick a different format for each row.  
-- ✅ **Select/Deselect All** via a header checkbox.  
-- ✅ **Live Progress Bars**  
-  Centered % text in each row, plus overall speed & ETA in the status bar.  
-- ⚙️ **Auto-Shutdown Option**  
-  Have your machine shut down when all downloads finish.  
-- 🎞️ **Bundled FFmpeg** (via `imageio-ffmpeg`)—no separate install required.  
-- 🖼️ **Custom App & Taskbar Icon** on Windows.  
-- 📂 **Automatic Default Folder**  
-  `~/Videos/QuickYTDL Downloads` is created if missing.
+## 📢 v1.2.0 – Audio Only Downloads
+
+### 🎵 MP3 Download Support
+- Extract and download playlist items as **MP3** files.
+
+### 🎚 Sample Rate Selector
+- Choose between **44.1 kHz** or **48 kHz** when downloading MP3s.
+
+### 🤖 Smarter Button States
+- 🔗 **Fetch** enabled only when a valid URL is entered  
+- 🟢 **Download** becomes active once at least one video is selected  
+- ❌ **Cancel** remains active during all processes  
+
+### 🗒 Cleaned-up Logging
+- Removed duplicate entries in the complete log
+
+### 🛠 UI Reliability Improvements
+- Prevents zombie threads and dangling connections after fetch/download
+
+## 🔥 v1.1.0 – Stability & Format Controls
+
+### ✅ Download Controls
+- Subfolder creation based on playlist title (up to 20 characters)
+- Global and per-row format selection
+- Header checkbox to **Select/Deselect All**
+
+### 📶 Real-time Progress Feedback
+- Percent, speed, and ETA shown for each active download
+
+### ⚙️ Settings & Environment
+- **Auto-shutdown** toggle after download completes
+- **FFmpeg bundled** via `imageio-ffmpeg`—no separate installation needed
+- **Custom app/taskbar icon** on Windows
+- **Default save directory** auto-created in `~/Videos/QuickYTDL Downloads`
 
 ---
 
@@ -57,26 +97,23 @@ https://github.com/user-attachments/assets/dfb8a41d-1fdb-42f0-8f00-9339aa161b22
 
 Grab the latest `.exe` from [Releases](https://github.com/udwije/QuickYTDL/releases) and run—no install required.
 
+No installation requried. Download & Run.
+
 ---
 
 ## 🛠️ Build from Source
 
 ### Requirements
 
-- Python 3.9+  
+- `Python 3.9+`  
 - `yt-dlp`  
-- PyQt6  
+- `PyQt6`  
 - `imageio-ffmpeg`  
 
 ```bash
 pip install -r requirements.txt
 ```
 ### Generate resources
-
-```bash
-# Compile the Qt resource file:
-pyside6-rcc quickytdl/resources/resources.qrc -o quickytdl/resources_rc.py
-```
 
 ```bash
 # Launch the app
