@@ -2,18 +2,17 @@
 
 import os
 import re
-
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QHeaderView,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar,
     QPushButton, QStyledItemDelegate, QStyle, QStyleOptionButton,
-    QStyleOptionProgressBar, QStyleOptionViewItem, QTabWidget,
-    QTextEdit, QVBoxLayout, QWidget, QMainWindow, QTableView
+    QStyleOptionProgressBar, QTextEdit, QVBoxLayout, QWidget, QMainWindow, 
+    QTableView, QGroupBox
 )
 from PyQt6.QtCore import (
-    Qt, QThread, QUrl, QRect, pyqtSlot, pyqtSignal, QObject
+    Qt, QThread, QUrl, QRect, pyqtSlot, pyqtSignal, QObject, QEvent
 )
-from PyQt6.QtGui import QDesktopServices, QPainter
+from PyQt6.QtGui import QDesktopServices, QPainter, QIcon
 
 from quickytdl.models import PlaylistTableModel, DownloadTableModel
 from quickytdl.fetcher import PlaylistFetcher
@@ -21,6 +20,20 @@ from quickytdl.manager import DownloadManager
 from quickytdl.config import ConfigManager
 from quickytdl.utils import ensure_directory
 
+class CancelButtonDelegate(QStyledItemDelegate):
+    clicked = pyqtSignal(int)  # Emits row index
+
+    def paint(self, painter, option, index):
+        button = QStyleOptionButton()
+        button.rect = option.rect
+        button.text = "✖"
+        button.state = QStyle.StateFlag.State_Enabled
+        QApplication.style().drawControl(QStyle.ControlElement.CE_PushButton, button, painter)
+
+    def editorEvent(self, event, model, option, index):
+        if event.type() == QEvent.Type.MouseButtonRelease:
+            self.clicked.emit(index.row())
+        return True
 
 class FormatDelegate(QStyledItemDelegate):
     """Render a per-row QComboBox for selecting formats."""
@@ -36,35 +49,52 @@ class FormatDelegate(QStyledItemDelegate):
     def setModelData(self, editor, model, index):
         model.setData(index, editor.currentText(), Qt.ItemDataRole.EditRole)
 
-
 class ProgressBarDelegate(QStyledItemDelegate):
-    """Render a centered progress bar (percentage only)."""
     def paint(self, painter: QPainter, option, index):
         raw = index.data(Qt.ItemDataRole.DisplayRole) or ""
-        # parse leading percentage
-        try:
-            token = raw.split()[0]
-            if token.endswith('%'):
-                value = int(token[:-1])
-            else:
-                value = int(token)
-        except Exception:
-            value = 0
+        parts = [p.strip() for p in raw.split("│")]
+        percent_str = parts[0] if len(parts) > 0 else "0%"
+        speed = parts[1] if len(parts) > 1 else ""
+        eta = parts[2] if len(parts) > 2 else ""
 
-        opt = QStyleOptionProgressBar()
-        opt.rect = option.rect
-        opt.minimum, opt.maximum = 0, 100
-        opt.progress = value
-        opt.text = f"{value}%"
-        opt.textVisible = True
-        opt.textAlignment = Qt.AlignmentFlag.AlignCenter
+        try:
+            percent = int(percent_str.rstrip('%'))
+        except Exception:
+            percent = 0
 
         painter.save()
-        QApplication.style().drawControl(
-            QStyle.ControlElement.CE_ProgressBar, opt, painter
-        )
-        painter.restore()
+        painter.setFont(option.font)
+        metrics = painter.fontMetrics()
 
+        # Calculate available width
+        rect = option.rect
+        text_info = f"{percent:3}% | {speed} | {eta}"
+        text_width = metrics.horizontalAdvance(text_info) + 20
+        bar_area_width = rect.width() - text_width - 10
+
+        block_width = metrics.horizontalAdvance("▓")
+        total_blocks = max(int(bar_area_width / block_width), 5)
+        filled_blocks = int((percent / 100) * total_blocks)
+        empty_blocks = total_blocks - filled_blocks
+
+        x = rect.x() + 5
+        y = rect.y() + (rect.height() + metrics.ascent() - metrics.descent()) // 2
+
+        # Draw filled blocks
+        painter.setPen(Qt.GlobalColor.green)
+        painter.drawText(x, y, "▓" * filled_blocks)
+        x += block_width * filled_blocks
+
+        # Draw empty blocks
+        painter.setPen(Qt.GlobalColor.lightGray)
+        painter.drawText(x, y, "░" * empty_blocks)
+        x += block_width * empty_blocks + 5
+
+        # Draw percent/speed/eta
+        painter.setPen(Qt.GlobalColor.black)
+        painter.drawText(x, y, f"{percent:3}% | {speed} | {eta}")
+
+        painter.restore()
 
 class CheckBoxHeader(QHeaderView):
     """
@@ -107,7 +137,6 @@ class CheckBoxHeader(QHeaderView):
         else:
             super().mousePressEvent(event)
 
-
 class FetchWorker(QObject):
     """
     Worker to fetch playlist metadata in its own thread.
@@ -138,173 +167,202 @@ class FetchWorker(QObject):
         finally:
             QThread.currentThread().quit()
 
-
 class MainWindow(QMainWindow):
-    """Main application window for QuickYTDL."""
     def __init__(self):
         super().__init__()
-
-        # ── Window setup ───────────────────────────────────────
+        self._allFetchedItems = []
         self.setWindowTitle("QuickYTDL")
-        self.resize(1000, 700)
+        self.resize(1200, 800)
+        self.setWindowIcon(QIcon("assets/icon.png"))
 
-        # ── Status bar: progress + open-folder button ──────────
         self.sb_progress = QProgressBar()
         self.sb_progress.setVisible(False)
         self.statusBar().addPermanentWidget(self.sb_progress)
 
-        self.openFolderBtn = QPushButton("Open Download Folder")
+        self.openFolderBtn = QPushButton("Open Folder")
         self.openFolderBtn.setVisible(False)
         self.openFolderBtn.clicked.connect(self._open_download_dir)
         self.statusBar().addPermanentWidget(self.openFolderBtn)
 
-        # ── Load settings ──────────────────────────────────────
         self.config = ConfigManager()
         self.config.load()
         if not os.path.isdir(self.config.default_save_dir):
             self._prompt_for_default_folder()
 
-        # ── Core components ───────────────────────────────────
         self.fetcher = PlaylistFetcher()
         self.manager = DownloadManager()
 
-        # ── Data models ───────────────────────────────────────
-        self.fetchModel    = PlaylistTableModel([])
+        self.fetchModel = PlaylistTableModel([])
         self.downloadModel = DownloadTableModel([])
 
-        # ── Build UI + wire signals ───────────────────────────
         self._build_ui()
         self._connect_signals()
 
-        # restore auto-shutdown checkbox state
         self.autoShutdownChk.setChecked(self.config.auto_shutdown)
-
-        # ── Input validation ──────────────────────────
-        # Disable buttons until valid inputs
         self.fetchBtn.setEnabled(False)
         self.downloadBtn.setEnabled(False)
-        # Enable Fetch only when URL is non-empty & well-formed
         self.urlEdit.textChanged.connect(self._update_fetch_button_state)
-        # Enable Download whenever selection changes
         self.fetchModel.dataChanged.connect(lambda *_: self._update_download_button_state())
         self.fetchHeader.toggled.connect(lambda _: self._update_download_button_state())
 
-        # placeholders for fetch thread & worker
         self._fetch_thread = None
         self._fetch_worker = None
 
+    def _toggle_log_view(self):
+        visible = self.logViewContainer.isVisible()
+        self.logViewContainer.setVisible(not visible)
+        self.logToggleBtn.setChecked(not visible)
+    
+    def _append_log(self, msg: str):
+        """Append a timestamped message to the log view."""
+        from quickytdl.utils import timestamped
+        self.logView.append(timestamped(msg))
+
+    def _toggle_options_view(self):
+        visible = self.optionsContainer.isVisible()
+        self.optionsContainer.setVisible(not visible)
+        self.optToggleBtn.setChecked(not visible)
+
     def _build_ui(self):
-        """Construct all widgets and layouts."""
         central = QWidget()
         self.setCentralWidget(central)
         vbox = QVBoxLayout(central)
 
-        # ── Tabs container ────────────────────────────────────
-        self.tabs = QTabWidget()
-        vbox.addWidget(self.tabs)
-
-        # --- Tab: QuickYTDL Main ---
-        tab_main = QWidget()
-        main_layout = QVBoxLayout(tab_main)
-
-        # URL input + Fetch button
-        h1 = QHBoxLayout()
+        # Wrap Fetch UI in a group box
+        self.fetchInputGroup = QGroupBox("Fetch Playlist")
+        fetch_input_layout = QHBoxLayout(self.fetchInputGroup)
         self.urlEdit = QLineEdit()
         self.urlEdit.setPlaceholderText("Playlist URL")
         self.fetchBtn = QPushButton("Fetch")
-        h1.addWidget(self.urlEdit)
-        h1.addWidget(self.fetchBtn)
-        main_layout.addLayout(h1)
+        fetch_input_layout.addWidget(self.urlEdit)
+        fetch_input_layout.addWidget(self.fetchBtn)
+        vbox.addWidget(self.fetchInputGroup)
 
-        # Playlist table with header-checkbox
+        # Search option
+        """self.searchEdit = QLineEdit()
+        self.searchEdit.setPlaceholderText("Search playlist...")
+        self.searchEdit.setVisible(True)  # hide until fetched
+        self.searchEdit.textChanged.connect(self._filter_playlist)
+        vbox.addWidget(self.searchEdit)"""
+        self.searchGroup = QGroupBox("Search")
+        search_layout = QVBoxLayout(self.searchGroup)
+
+        self.searchEdit = QLineEdit()
+        self.searchEdit.setPlaceholderText("Search playlist...")
+        self.searchEdit.textChanged.connect(self._filter_playlist)
+
+        search_layout.addWidget(self.searchEdit)
+        self.searchGroup.setVisible(False)  # Hide initially
+        vbox.addWidget(self.searchGroup)
+
+        # Fetched Table
         self.fetchTable = QTableView()
         self.fetchTable.setModel(self.fetchModel)
         header = CheckBoxHeader(Qt.Orientation.Horizontal, self.fetchTable)
         self.fetchTable.setHorizontalHeader(header)
         self.fetchHeader = header
         header.toggled.connect(self.on_select_all)
-
         self.fetchTable.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
         self.fetchTable.clicked.connect(self.on_fetch_table_clicked)
         self.fetchTable.setItemDelegateForColumn(3, FormatDelegate(self.fetchTable))
-
+        fetch_hdr = self.fetchTable.horizontalHeader()
         for col, mode in enumerate([
             QHeaderView.ResizeMode.Interactive,
             QHeaderView.ResizeMode.Interactive,
             QHeaderView.ResizeMode.Stretch,
             QHeaderView.ResizeMode.Interactive
         ]):
-            header.setSectionResizeMode(col, mode)
+            fetch_hdr.setSectionResizeMode(col, mode)
+        self.fetch_group = QGroupBox("Fetched Playlist")
+        fetch_layout = QVBoxLayout(self.fetch_group)
+        fetch_layout.addWidget(self.fetchTable)
+        vbox.addWidget(self.fetch_group)
 
-        main_layout.addWidget(self.fetchTable)
-
-        # Save location, global format controls
-        hl2 = QHBoxLayout()
-        hl2.addWidget(QLabel("Save Location:"))
         self.saveEdit = QLineEdit(self.config.default_save_dir)
         self.browseBtn = QPushButton("Browse")
-        hl2.addWidget(self.saveEdit)
-        hl2.addWidget(self.browseBtn)
-
         self.formatCombo = QComboBox()
         self.formatCombo.addItems(["1080p", "720p", "480p", "360p", "mp3"])
-        hl2.addWidget(QLabel("Global Format:"))
-        hl2.addWidget(self.formatCombo)
-
-        hl2.addWidget(QLabel("SR (Hz):"))
         self.srCombo = QComboBox()
         self.srCombo.addItems(["44100", "48000"])
         self.srCombo.setEnabled(False)
-        hl2.addWidget(self.srCombo)
-
         self.downloadBtn = QPushButton("Download")
         self.cancelBtn = QPushButton("Cancel")
-        hl2.addWidget(self.downloadBtn)
-        hl2.addWidget(self.cancelBtn)
 
-        main_layout.addLayout(hl2)
+        # Wrap the full control bar in a group box
+        self.controlGroup = QGroupBox("Controls")
+        control_layout = QHBoxLayout(self.controlGroup)
 
-        # Download status table
+        self.logToggleBtn = QPushButton("📄")
+        self.logToggleBtn.setToolTip("Show/Hide Log")
+        self.logToggleBtn.setCheckable(True)
+        self.logToggleBtn.setFixedWidth(30)
+        self.logToggleBtn.clicked.connect(self._toggle_log_view)
+        control_layout.addWidget(self.logToggleBtn)
+
+        self.optToggleBtn = QPushButton("⚙️")
+        self.optToggleBtn.setToolTip("Show/Hide Options")
+        self.optToggleBtn.setCheckable(True)
+        self.optToggleBtn.setFixedWidth(30)
+        self.optToggleBtn.clicked.connect(self._toggle_options_view)
+        control_layout.addWidget(self.optToggleBtn)
+
+        control_layout.addWidget(QLabel("Save Location: "))
+        control_layout.addWidget(self.saveEdit)
+        control_layout.addWidget(self.browseBtn)
+        control_layout.addWidget(QLabel("Format: "))
+        control_layout.addWidget(self.formatCombo)
+        control_layout.addWidget(QLabel("SR (Hz): "))
+        control_layout.addWidget(self.srCombo)
+        control_layout.addWidget(self.downloadBtn)
+        control_layout.addWidget(self.cancelBtn)
+        
+        # Downloading Table
         self.downloadTable = QTableView()
         self.downloadTable.setModel(self.downloadModel)
-        self.downloadTable.hideColumn(2)  # hide per-row format
+        self.downloadTable.hideColumn(2)
         self.downloadTable.setItemDelegateForColumn(3, ProgressBarDelegate(self.downloadTable))
-
+        self.cancelDelegate = CancelButtonDelegate(self.downloadTable)
+        self.cancelDelegate.clicked.connect(self._cancel_single_download)
+        self.downloadTable.setItemDelegateForColumn(4, self.cancelDelegate)
         dl_hdr = self.downloadTable.horizontalHeader()
         for col, mode in enumerate([
             QHeaderView.ResizeMode.Interactive,
             QHeaderView.ResizeMode.Stretch,
             QHeaderView.ResizeMode.Fixed,
             QHeaderView.ResizeMode.Stretch,
+            QHeaderView.ResizeMode.Interactive,
             QHeaderView.ResizeMode.Interactive
         ]):
             dl_hdr.setSectionResizeMode(col, mode)
+        self.download_group = QGroupBox("Download Progress")
+        download_layout = QVBoxLayout(self.download_group)
+        download_layout.addWidget(self.downloadTable)
+        vbox.addWidget(self.download_group)
+        vbox.addWidget(self.controlGroup)
+        self.download_group.setVisible(False)
 
-        main_layout.addWidget(self.downloadTable)
-        self.tabs.addTab(tab_main, "QuickYTDL")
-
-        # --- Tab: Complete Log ---
-        tab_log = QWidget()
-        log_layout = QVBoxLayout(tab_log)
+        self.logViewContainer = QWidget()
+        self.logViewContainer.setVisible(False)
+        log_layout = QVBoxLayout(self.logViewContainer)
         self.logView = QTextEdit()
         self.logView.setReadOnly(True)
         log_layout.addWidget(self.logView)
-        self.tabs.addTab(tab_log, "Complete Log")
+        vbox.addWidget(self.logViewContainer)
 
-        # --- Tab: Options ---
-        tab_opt = QWidget()
-        opt_layout = QVBoxLayout(tab_opt)
+        self.optionsContainer = QWidget()
+        self.optionsContainer.setVisible(False)
+        opt_layout = QVBoxLayout(self.optionsContainer)
         self.autoShutdownChk = QCheckBox("Auto shutdown when complete")
         opt_layout.addWidget(self.autoShutdownChk)
-
         hl3 = QHBoxLayout()
-        hl3.addWidget(QLabel("Default Save Location:"))
         self.defSaveEdit = QLineEdit(self.config.default_save_dir)
         self.defBrowseBtn = QPushButton("Browse")
+        hl3.addWidget(QLabel("Default Save Location:"))
         hl3.addWidget(self.defSaveEdit)
         hl3.addWidget(self.defBrowseBtn)
         opt_layout.addLayout(hl3)
-        self.tabs.addTab(tab_opt, "Options")
+        vbox.addWidget(self.optionsContainer)
+
 
     def _connect_signals(self):
         """Hook up all button clicks, model signals, and manager events."""
@@ -354,9 +412,52 @@ class MainWindow(QMainWindow):
         """Enable Download when ≥1 playlist item is selected."""
         has_sel = bool(self.fetchModel.get_selected_items())
         self.downloadBtn.setEnabled(has_sel)
-        
+    
+    def _show_fetch_view(self):
+        self.fetch_group.setVisible(True)
+        self.download_group.setVisible(False)
+
+    def _show_download_view(self):
+        self.fetch_group.setVisible(False)
+        self.download_group.setVisible(True)
+    
+    def _show_search_view(self):
+        self.searchGroup.setVisible(True)
+        self.fetchInputGroup.setVisible(False)
+
+    def _show_fetch_input_view(self):
+        self.searchGroup.setVisible(False)
+        self.fetchInputGroup.setVisible(True)
+
+
+    def _filter_playlist(self, text):
+        text = text.lower().strip()
+        #print("Search term:", text)
+        #print("Total items stored:", len(self._allFetchedItems))
+        if not text:
+            self.fetchModel.set_items(self._allFetchedItems)
+            return
+
+        filtered = []
+        for item in self._allFetchedItems:
+            #print("Checking:", item.title)
+            if text in item.title.lower():
+                filtered.append(item)
+
+        #print("Filtered items:", len(filtered))
+        self.fetchModel.set_items(filtered)
 
     # ── Slot implementations for fetch/download workflows ───────────────────────────
+
+    @pyqtSlot(int)
+    def _cancel_single_download(self, row):
+        try:
+            worker = self.manager._workers[row]
+            worker.requestInterruption()
+            self.downloadModel.update_status(row, "Canceled")
+            self.statusBar().showMessage(f"Canceled download #{row + 1}")
+        except Exception as e:
+            print(f"Cancel error at row {row}: {e}")
 
     @pyqtSlot()
     def on_fetch_clicked(self):
@@ -391,11 +492,15 @@ class MainWindow(QMainWindow):
         self.fetchHeader._isChecked = True
         self.fetchHeader.updateSection(0)
         self.on_select_all(True)
+        self._show_fetch_view()
 
     @pyqtSlot(list)
     def _handle_fetch_done(self, items: list):
         """Populate table, set save path, and color-code global format."""
         self.fetchBtn.setEnabled(True)
+        self._allFetchedItems = items
+        self._show_search_view()
+        self.searchEdit.clear()
         self.fetchModel.set_items(items)
 
         title = self.fetcher.last_playlist_title or ""
@@ -504,41 +609,53 @@ class MainWindow(QMainWindow):
         self.manager.last_download_dir = save_dir
         self.manager.start_downloads(sel, save_dir)
 
+        self._show_download_view()
+
+        # 🔄 Show indeterminate status bar while yt-dlp prepares
+        self.sb_progress.setVisible(True)
+        self.sb_progress.setRange(0, 0)  # Busy indicator
+        self.statusBar().showMessage("Preparing downloads…")
+
     @pyqtSlot()
     def on_cancel_clicked(self):
         """Cancel all in-progress downloads and reset UI."""
-        self.manager.cancel_all()
-        self.downloadModel.set_items([])
 
-        # disconnect any pending fetch callbacks
-        if self._fetch_worker:
-            try:
-                self._fetch_worker.finished.disconnect(self._handle_fetch_done)
-                self._fetch_worker.error.disconnect(self._handle_fetch_error)
-                self._fetch_worker.log.disconnect(self.logView.append)
-            except Exception:
-                pass
+        # 1. Reset fetch input state
+        self.urlEdit.clear()
+        self.fetchBtn.setEnabled(False)
+        self._show_fetch_input_view()
 
-        # clear playlist table + header state
+        # 2. Clear the fetched playlist table
         self.fetchModel.set_items([])
         self.fetchHeader._isChecked = False
         self.fetchHeader.updateSection(0)
 
-        # restore controls
+        # 3. Cancel all ongoing downloads
+        self.manager.cancel_all()
+        self.downloadModel.set_items([])
+
+        # 4. Restore default save directory
+        self.saveEdit.setText(self.config.default_save_dir)
+
+        # 5. Restore control state
         for w in (
             self.fetchBtn, self.urlEdit, self.browseBtn,
             self.downloadBtn, self.formatCombo, self.srCombo
         ):
             w.setEnabled(True)
-        #self.cancelBtn.setEnabled(False)
+        self.cancelBtn.setEnabled(False)
 
-        # restore browse button hookup
+        # 6. Disconnect the dynamic "Open Directory" button behavior
         try:
             self.browseBtn.clicked.disconnect(self._open_download_dir)
         except TypeError:
             pass
         self.browseBtn.clicked.connect(self.on_browse_save)
         self.browseBtn.setText("Browse")
+
+        # 7. Clear status bar and hide progress
+        self.statusBar().clearMessage()
+        self.sb_progress.setVisible(False)
 
     @pyqtSlot(int, float, str, str, str)
     def on_download_progress(self, idx: int, pct: float, status: str, speed: str, eta: str):
@@ -560,20 +677,38 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage(msg)
 
-        if self.sb_progress.isVisible() and self.sb_progress.maximum() == 100:
+        if self.sb_progress.isVisible():
+            if self.sb_progress.maximum() == 0:
+                # First real download progress → switch to determinate mode
+                self.sb_progress.setRange(0, 100)
             self.sb_progress.setValue(int(pct))
+
 
     @pyqtSlot(int, str)
     def on_download_finished(self, idx: int, status: str):
         """Handle one video finishing; when all are done, wrap up."""
         self.downloadModel.update_status(idx, status)
+
         statuses = self.downloadModel.get_statuses()
-        if not all(s in ("Completed", "Skipped") for s in statuses):
+        if not all(s in ("Completed", "Skipped", "Canceled", "Failed") for s in statuses):
             return
 
-        # show final state
+        # Count outcomes
+        counts = {"Completed": 0, "Skipped": 0, "Canceled": 0, "Failed": 0}
+        for s in statuses:
+            if s in counts:
+                counts[s] += 1
+
+        # 🧾 Compose summary
+        summary = (
+            f"✅ {counts['Completed']} completed  "
+            f"⚠️ {counts['Canceled']} canceled  "
+            f"❌ {counts['Failed']} failed"
+        )
+        self.statusBar().showMessage(summary)
+
+        # Restore UI
         self.sb_progress.setVisible(False)
-        self.statusBar().showMessage("All downloads completed.")
         self.browseBtn.setText("Open Directory")
         try:
             self.browseBtn.clicked.disconnect(self.on_browse_save)
@@ -586,13 +721,16 @@ class MainWindow(QMainWindow):
             self.saveEdit, self.formatCombo, self.srCombo
         ):
             w.setEnabled(True)
-        #self.cancelBtn.setEnabled(False)
+
+        self._show_fetch_view()
+        self._show_fetch_input_view()
 
         if self.autoShutdownChk.isChecked():
             if os.name == "nt":
                 os.system("shutdown /s /t 60")
             else:
                 os.system("shutdown now")
+
 
     @pyqtSlot(bool)
     def on_select_all(self, checked: bool):
