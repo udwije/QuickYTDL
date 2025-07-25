@@ -7,10 +7,10 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar,
     QPushButton, QStyledItemDelegate, QStyle, QStyleOptionButton,
     QStyleOptionProgressBar, QTextEdit, QVBoxLayout, QWidget, QMainWindow, 
-    QTableView, QGroupBox
+    QTableView, QGroupBox,
 )
 from PyQt6.QtCore import (
-    Qt, QThread, QUrl, QRect, pyqtSlot, pyqtSignal, QObject
+    Qt, QThread, QUrl, QRect, pyqtSlot, pyqtSignal, QObject, QEvent
 )
 from PyQt6.QtGui import QDesktopServices, QPainter
 
@@ -19,6 +19,21 @@ from quickytdl.fetcher import PlaylistFetcher
 from quickytdl.manager import DownloadManager
 from quickytdl.config import ConfigManager
 from quickytdl.utils import ensure_directory
+
+class CancelButtonDelegate(QStyledItemDelegate):
+    clicked = pyqtSignal(int)  # Emits row index
+
+    def paint(self, painter, option, index):
+        button = QStyleOptionButton()
+        button.rect = option.rect
+        button.text = "✖"
+        button.state = QStyle.StateFlag.State_Enabled
+        QApplication.style().drawControl(QStyle.ControlElement.CE_PushButton, button, painter)
+
+    def editorEvent(self, event, model, option, index):
+        if event.type() == QEvent.Type.MouseButtonRelease:
+            self.clicked.emit(index.row())
+        return True
 
 class FormatDelegate(QStyledItemDelegate):
     """Render a per-row QComboBox for selecting formats."""
@@ -196,6 +211,11 @@ class MainWindow(QMainWindow):
         visible = self.logViewContainer.isVisible()
         self.logViewContainer.setVisible(not visible)
         self.logToggleBtn.setChecked(not visible)
+    
+    def _append_log(self, msg: str):
+        """Append a timestamped message to the log view."""
+        from quickytdl.utils import timestamped
+        self.logView.append(timestamped(msg))
 
     def _toggle_options_view(self):
         visible = self.optionsContainer.isVisible()
@@ -294,19 +314,23 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.srCombo)
         control_layout.addWidget(self.downloadBtn)
         control_layout.addWidget(self.cancelBtn)
-        vbox.addWidget(self.controlGroup)
+        
         
         # Downloading Table
         self.downloadTable = QTableView()
         self.downloadTable.setModel(self.downloadModel)
         self.downloadTable.hideColumn(2)
         self.downloadTable.setItemDelegateForColumn(3, ProgressBarDelegate(self.downloadTable))
+        self.cancelDelegate = CancelButtonDelegate(self.downloadTable)
+        self.cancelDelegate.clicked.connect(self._cancel_single_download)
+        self.downloadTable.setItemDelegateForColumn(4, self.cancelDelegate)
         dl_hdr = self.downloadTable.horizontalHeader()
         for col, mode in enumerate([
             QHeaderView.ResizeMode.Interactive,
             QHeaderView.ResizeMode.Stretch,
             QHeaderView.ResizeMode.Fixed,
             QHeaderView.ResizeMode.Stretch,
+            QHeaderView.ResizeMode.Interactive,
             QHeaderView.ResizeMode.Interactive
         ]):
             dl_hdr.setSectionResizeMode(col, mode)
@@ -314,6 +338,7 @@ class MainWindow(QMainWindow):
         download_layout = QVBoxLayout(self.download_group)
         download_layout.addWidget(self.downloadTable)
         vbox.addWidget(self.download_group)
+        vbox.addWidget(self.controlGroup)
         self.download_group.setVisible(False)
 
         self.logViewContainer = QWidget()
@@ -423,6 +448,16 @@ class MainWindow(QMainWindow):
         self.fetchModel.set_items(filtered)
 
     # ── Slot implementations for fetch/download workflows ───────────────────────────
+
+    @pyqtSlot(int)
+    def _cancel_single_download(self, row):
+        try:
+            worker = self.manager._workers[row]
+            worker.requestInterruption()
+            self.downloadModel.update_status(row, "Canceled")
+            self.statusBar().showMessage(f"Canceled download #{row + 1}")
+        except Exception as e:
+            print(f"Cancel error at row {row}: {e}")
 
     @pyqtSlot()
     def on_fetch_clicked(self):
@@ -641,13 +676,15 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(int, str)
     def on_download_finished(self, idx: int, status: str):
-        """Handle one video finishing; when all are done, wrap up."""
+        """Handle one video finishing; when all are done, wrap up and show summary."""
         self.downloadModel.update_status(idx, status)
         statuses = self.downloadModel.get_statuses()
-        if not all(s in ("Completed", "Skipped") for s in statuses):
+
+        # Check if all are done (Completed, Skipped, Canceled, or Failed)
+        if not all(s in ("Completed", "Skipped", "Canceled", "Failed") for s in statuses):
             return
 
-        # show final state
+        # Final UI state
         self.sb_progress.setVisible(False)
         self.statusBar().showMessage("All downloads completed.")
         self.browseBtn.setText("Open Directory")
@@ -662,16 +699,33 @@ class MainWindow(QMainWindow):
             self.saveEdit, self.formatCombo, self.srCombo
         ):
             w.setEnabled(True)
-        #self.cancelBtn.setEnabled(False)
+
         self._show_fetch_view()
         self._show_fetch_input_view()
 
+        # ✅ Summary log message
+        completed = statuses.count("Completed")
+        canceled = statuses.count("Canceled")
+        failed = statuses.count("Failed")
+        skipped = statuses.count("Skipped")
+
+        summary = f"✅ {completed} completed"
+        if canceled:
+            summary += f" | ❌ {canceled} canceled"
+        if failed:
+            summary += f" | ⚠️ {failed} failed"
+        if skipped:
+            summary += f" | ⏭️ {skipped} skipped"
+
+        self._append_log(summary)
+
+        # Optional: Auto shutdown
         if self.autoShutdownChk.isChecked():
             if os.name == "nt":
                 os.system("shutdown /s /t 60")
             else:
                 os.system("shutdown now")
-        self._show_fetch_view()
+
 
     @pyqtSlot(bool)
     def on_select_all(self, checked: bool):

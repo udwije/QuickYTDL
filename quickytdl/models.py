@@ -115,9 +115,9 @@ class PlaylistTableModel(QAbstractTableModel):
 class DownloadTableModel(QAbstractTableModel):
     """
     Table model for download status.
-    Columns: [Video No, Description, Format, Progress, Status]
+    Columns: [Video No, Description, Format, Progress, Cancel, Status]
     """
-    HEADERS = ["Video No", "Description", "Format", "Progress", "Status"]
+    HEADERS = ["Video No", "Description", "Format", "Progress", "Cancel", "Status"]
 
     def __init__(self, items=None):
         super().__init__()
@@ -152,9 +152,10 @@ class DownloadTableModel(QAbstractTableModel):
                     parts.append(item.speed)
                 if getattr(item, "eta", ""):
                     parts.append(f"ETA {item.eta}")
-                # join with separators
                 return " │ ".join(parts)
             if col == 4:
+                return ""  # Placeholder: rendered by CancelButtonDelegate
+            if col == 5:
                 return item.status
 
         return None
@@ -167,13 +168,9 @@ class DownloadTableModel(QAbstractTableModel):
     def flags(self, index):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
-        # all cells read-only
         return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
 
     def set_items(self, items):
-        """
-        Initialize download items: set progress=0 and status='Queued'.
-        """
         self.beginResetModel()
         self._items = items
         for it in self._items:
@@ -182,27 +179,22 @@ class DownloadTableModel(QAbstractTableModel):
         self.endResetModel()
 
     def update_progress(self, row, percent, status):
-        """
-        Called during download to update progress bar and status text.
-        """
         if 0 <= row < len(self._items):
             it = self._items[row]
             it.progress = percent
             it.status = status
+            # update columns: Progress, Cancel, Status
             left = self.index(row, 3)
-            right = self.index(row, 4)
+            right = self.index(row, 5)
             self.dataChanged.emit(left, right, [Qt.ItemDataRole.DisplayRole])
 
     def update_status(self, row, status):
-        """
-        Called when a download finishes (or fails).
-        """
         if 0 <= row < len(self._items):
             it = self._items[row]
             it.status = status
-            idx = self.index(row, 4)
+            idx = self.index(row, 5)
             self.dataChanged.emit(idx, idx, [Qt.ItemDataRole.DisplayRole])
 
     def get_statuses(self):
-        """Return list of status strings for all rows."""
         return [it.status for it in self._items]
+

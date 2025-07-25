@@ -5,7 +5,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, QSemaphore
 from yt_dlp import YoutubeDL
 import imageio_ffmpeg as _iioffmpeg
 # helper to strip illegal filename characters & format sizes
-from quickytdl.utils import sanitize_filename, human_readable_size  
+from quickytdl.utils import sanitize_filename
 
 _download_semaphore = QSemaphore(4)  #  max 4 concurrent downloads
 
@@ -48,22 +48,20 @@ class DownloadWorker(QThread):
                 self.finished.emit(self.index, "Failed")
                 return
 
-           # 3) Build format string based on user choice
+            # 3) Build format string based on user choice
             selected = self.selected_format
             if selected == "mp3":
                 # audio‐only
                 fmt = "bestaudio/best"
-
             elif selected in ["1080p", "720p", "480p", "360p"]:
                 # exact MP4 @HEIGHT + best M4A audio,
                 # fallback to <=HEIGHT MP4+M4A, then any MP4
                 height = int(selected.rstrip("p"))
                 fmt = (
-                   f"bestvideo[height={height}][ext=mp4]+bestaudio[ext=m4a]/"
+                    f"bestvideo[height={height}][ext=mp4]+bestaudio[ext=m4a]/"
                     f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/"
                     f"best[ext=mp4]"
                 )
-
             else:
                 # last‐resort
                 fmt = "best"
@@ -82,30 +80,37 @@ class DownloadWorker(QThread):
                 "format": fmt,
                 "outtmpl": outtmpl,
                 "quiet": True,
-                # point yt-dlp to the ffmpeg binary
                 "ffmpeg_location": get_ffmpeg_exe(),
-                # hook into our progress handler
                 "progress_hooks": [self._progress_hook],
             }
 
             # 6) MP3 postprocessing (only if MP3 selected)
             if selected == "mp3":
-                ydl_opts["postprocessors"] = [
-                    {
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192",
-                    }
-                ]
-                # apply sample rate if provided
+                ydl_opts["postprocessors"] = [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }]
                 sr = getattr(self.item, 'sample_rate', None)
                 if sr:
                     ydl_opts["postprocessor_args"] = ["-ar", str(sr)]
 
             # 7) Start download
             self.log.emit(f"⏬ Download #{self.item.index}: {self.item.title} [{selected}]")
-            with YoutubeDL(ydl_opts) as ydl:
-                ydl.download([self.url])
+            try:
+                with YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([self.url])
+            except Exception as e:
+                # check for cancellation keyword
+                if "cancel" in str(e).lower():
+                    self.log.emit(f"⚠️ Download canceled #{self.item.index}")
+                    self.finished.emit(self.index, "Canceled")
+                    return
+                else:
+                    from quickytdl.utils import timestamped
+                    self.log.emit(timestamped(f"❌ Download failed #{self.item.index}: {e}"))
+                    self.finished.emit(self.index, "Failed")
+                    return
 
             # 8) Final cancellation check
             if self.isInterruptionRequested():
@@ -114,6 +119,7 @@ class DownloadWorker(QThread):
             else:
                 self.log.emit(f"✅ Completed #{self.item.index}")
                 self.finished.emit(self.index, "Completed")
+
         finally:
             _download_semaphore.release()
 
@@ -121,21 +127,30 @@ class DownloadWorker(QThread):
         """
         yt-dlp progress hook callback.
         Receives a dict with download status, emits percent+status.
+        Checks for user cancellation and raises to exit cleanly.
         """
+        # 🛑 Cancel if requested
+        if self.isInterruptionRequested():
+            self.log.emit(f"🛑 Cancel requested for #{self.item.index}")
+            raise Exception("User cancelled download")
+
         status = d.get("status")
         if status == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 1
             downloaded = d.get("downloaded_bytes", 0)
+
             # compute percent
             percent = (downloaded / total) * 100 if total else 0.0
+
             # format speed and ETA
             raw_speed = d.get("speed") or 0
-            raw_eta   = d.get("eta")   or 0
+            raw_eta = d.get("eta") or 0
             from quickytdl.utils import human_readable_size
             import time
             speed_str = human_readable_size(int(raw_speed)) + "/s"
-            eta_str   = time.strftime("%M:%S", time.gmtime(raw_eta))
-            # emit full five‐argument signal
+            eta_str = time.strftime("%M:%S", time.gmtime(raw_eta))
+
+            # emit progress signal
             self.progress.emit(
                 self.index,
                 percent,
@@ -143,10 +158,10 @@ class DownloadWorker(QThread):
                 speed_str,
                 eta_str,
             )
+
         elif status == "finished":
             # file downloaded, but merging may still be in progress
             self.progress.emit(self.index, 100.0, "Merging", "", "")
-
 
 class DownloadManager(QObject):
     """
