@@ -7,12 +7,12 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar,
     QPushButton, QStyledItemDelegate, QStyle, QStyleOptionButton,
     QStyleOptionProgressBar, QTextEdit, QVBoxLayout, QWidget, QMainWindow, 
-    QTableView, QGroupBox,
+    QTableView, QGroupBox
 )
 from PyQt6.QtCore import (
     Qt, QThread, QUrl, QRect, pyqtSlot, pyqtSignal, QObject, QEvent
 )
-from PyQt6.QtGui import QDesktopServices, QPainter
+from PyQt6.QtGui import QDesktopServices, QPainter, QIcon
 
 from quickytdl.models import PlaylistTableModel, DownloadTableModel
 from quickytdl.fetcher import PlaylistFetcher
@@ -173,6 +173,7 @@ class MainWindow(QMainWindow):
         self._allFetchedItems = []
         self.setWindowTitle("QuickYTDL")
         self.resize(1200, 800)
+        self.setWindowIcon(QIcon("assets/icon.png"))
 
         self.sb_progress = QProgressBar()
         self.sb_progress.setVisible(False)
