@@ -72,7 +72,7 @@ class ProgressBarDelegate(QStyledItemDelegate):
         text_width = metrics.horizontalAdvance(text_info) + 20
         bar_area_width = rect.width() - text_width - 10
 
-        block_width = metrics.horizontalAdvance("▓")
+        block_width = metrics.horizontalAdvance("▓") or 1
         total_blocks = max(int(bar_area_width / block_width), 5)
         filled_blocks = int((percent / 100) * total_blocks)
         empty_blocks = total_blocks - filled_blocks

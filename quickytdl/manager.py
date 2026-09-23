@@ -34,94 +34,106 @@ class DownloadWorker(QThread):
     def run(self):
         _download_semaphore.acquire()
         try:
-            # 1) Pre‐check for cancellation
-            if self.isInterruptionRequested():
-                self.log.emit(f"⚠️ Cancelled before start: {self.item.title}")
+            self._run_download()
+        except Exception as e:
+            # Absolute safety net: PyQt6 will abort() the whole process if an
+            # exception escapes a QThread.run() override, so nothing above
+            # this point may ever be allowed to raise unhandled.
+            from quickytdl.utils import timestamped
+            self.log.emit(timestamped(f"❌ Unexpected error #{self.item.index}: {e}"))
+            try:
+                self.finished.emit(self.index, "Failed")
+            except Exception:
+                pass
+        finally:
+            _download_semaphore.release()
+
+    def _run_download(self):
+        # 1) Pre‐check for cancellation
+        if self.isInterruptionRequested():
+            self.log.emit(f"⚠️ Cancelled before start: {self.item.title}")
+            self.finished.emit(self.index, "Canceled")
+            return
+
+        # 2) Ensure save dir exists
+        try:
+            os.makedirs(self.save_dir, exist_ok=True)
+        except Exception as e:
+            self.log.emit(f"❌ Cannot create save directory: {e}")
+            self.finished.emit(self.index, "Failed")
+            return
+
+        # 3) Build format string based on user choice
+        selected = self.selected_format
+        if selected == "mp3":
+            # audio‐only
+            fmt = "bestaudio/best"
+        elif selected in ["1080p", "720p", "480p", "360p"]:
+            # exact MP4 @HEIGHT + best M4A audio,
+            # fallback to <=HEIGHT MP4+M4A, then any MP4
+            height = int(selected.rstrip("p"))
+            fmt = (
+                f"bestvideo[height={height}][ext=mp4]+bestaudio[ext=m4a]/"
+                f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/"
+                f"best[ext=mp4]"
+            )
+        else:
+            # last‐resort
+            fmt = "best"
+
+        # 4) Safe output template
+        safe_title = sanitize_filename(self.item.title)
+        outtmpl = os.path.join(
+            self.save_dir,
+            f"{self.item.index:03d} - {safe_title}.%(ext)s"
+        )
+        os.makedirs(os.path.dirname(outtmpl), exist_ok=True)
+
+        # 5) YDL opts (embed the bundled FFmpeg and enable progress hooks)
+        from imageio_ffmpeg import get_ffmpeg_exe
+        ydl_opts = {
+            "format": fmt,
+            "outtmpl": outtmpl,
+            "quiet": True,
+            "ffmpeg_location": get_ffmpeg_exe(),
+            "progress_hooks": [self._progress_hook],
+        }
+
+        # 6) MP3 postprocessing (only if MP3 selected)
+        if selected == "mp3":
+            ydl_opts["postprocessors"] = [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }]
+            sr = getattr(self.item, 'sample_rate', None)
+            if sr:
+                ydl_opts["postprocessor_args"] = ["-ar", str(sr)]
+
+        # 7) Start download
+        self.log.emit(f"⏬ Download #{self.item.index}: {self.item.title} [{selected}]")
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                ydl.download([self.url])
+        except Exception as e:
+            # check for cancellation keyword
+            if "cancel" in str(e).lower():
+                self.log.emit(f"⚠️ Download canceled #{self.item.index}")
                 self.finished.emit(self.index, "Canceled")
                 return
-
-            # 2) Ensure save dir exists
-            try:
-                os.makedirs(self.save_dir, exist_ok=True)
-            except Exception as e:
-                self.log.emit(f"❌ Cannot create save directory: {e}")
+            else:
+                from quickytdl.utils import timestamped
+                self.log.emit(timestamped(f"❌ Download failed #{self.item.index}: {e}"))
                 self.finished.emit(self.index, "Failed")
                 return
 
-            # 3) Build format string based on user choice
-            selected = self.selected_format
-            if selected == "mp3":
-                # audio‐only
-                fmt = "bestaudio/best"
-            elif selected in ["1080p", "720p", "480p", "360p"]:
-                # exact MP4 @HEIGHT + best M4A audio,
-                # fallback to <=HEIGHT MP4+M4A, then any MP4
-                height = int(selected.rstrip("p"))
-                fmt = (
-                    f"bestvideo[height={height}][ext=mp4]+bestaudio[ext=m4a]/"
-                    f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/"
-                    f"best[ext=mp4]"
-                )
-            else:
-                # last‐resort
-                fmt = "best"
-
-            # 4) Safe output template
-            safe_title = sanitize_filename(self.item.title)
-            outtmpl = os.path.join(
-                self.save_dir,
-                f"{self.item.index:03d} - {safe_title}.%(ext)s"
-            )
-            os.makedirs(os.path.dirname(outtmpl), exist_ok=True)
-
-            # 5) YDL opts (embed the bundled FFmpeg and enable progress hooks)
-            from imageio_ffmpeg import get_ffmpeg_exe
-            ydl_opts = {
-                "format": fmt,
-                "outtmpl": outtmpl,
-                "quiet": True,
-                "ffmpeg_location": get_ffmpeg_exe(),
-                "progress_hooks": [self._progress_hook],
-            }
-
-            # 6) MP3 postprocessing (only if MP3 selected)
-            if selected == "mp3":
-                ydl_opts["postprocessors"] = [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }]
-                sr = getattr(self.item, 'sample_rate', None)
-                if sr:
-                    ydl_opts["postprocessor_args"] = ["-ar", str(sr)]
-
-            # 7) Start download
-            self.log.emit(f"⏬ Download #{self.item.index}: {self.item.title} [{selected}]")
-            try:
-                with YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([self.url])
-            except Exception as e:
-                # check for cancellation keyword
-                if "cancel" in str(e).lower():
-                    self.log.emit(f"⚠️ Download canceled #{self.item.index}")
-                    self.finished.emit(self.index, "Canceled")
-                    return
-                else:
-                    from quickytdl.utils import timestamped
-                    self.log.emit(timestamped(f"❌ Download failed #{self.item.index}: {e}"))
-                    self.finished.emit(self.index, "Failed")
-                    return
-
-            # 8) Final cancellation check
-            if self.isInterruptionRequested():
-                self.log.emit(f"⚠️ Download canceled #{self.item.index}")
-                self.finished.emit(self.index, "Canceled")
-            else:
-                self.log.emit(f"✅ Completed #{self.item.index}")
-                self.finished.emit(self.index, "Completed")
-
-        finally:
-            _download_semaphore.release()
+        # 8) Final cancellation check
+        if self.isInterruptionRequested():
+            self.log.emit(f"⚠️ Download canceled #{self.item.index}")
+            self.finished.emit(self.index, "Canceled")
+        else:
+            self.log.emit(f"✅ Completed #{self.item.index}")
+            self.finished.emit(self.index, "Completed")
 
     def _progress_hook(self, d):
         """
