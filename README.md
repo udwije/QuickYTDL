@@ -29,8 +29,8 @@ Download single videos or entire playlists in your choice of Video resolutions o
 - 🧠 Smart default folder fallback: `~/Videos/QuickYTDL Downloads`
 
 ### 📦 Distribution
-- 🖥️ Single-file **Windows executable** built from a committed PyInstaller spec
-- 🧰 **MSI installer** with Start Menu / Desktop shortcuts and clean upgrades
+- 🖥️ Single-file **Windows executable**
+- Download v1.4.0 [Releases](https://github.com/udwije/QuickYTDL/releases)
 
 ---
 
@@ -70,6 +70,29 @@ Download single videos or entire playlists in your choice of Video resolutions o
 ---
 
 ## 🔄 Changelog
+
+### 📢 v1.3.0 – Progress & Search Overhaul
+
+#### 🆕 Download Progress Redesign
+- Live ETA, speed, and percentage using visually styled blocks
+- Per-row progress delegate with cancel button
+
+#### 🧠 Improved Search & Filter
+- Toggle between URL input and search bar
+- Fuzzy title filtering based on keyword match
+
+#### 📋 Unified Signal Management
+- Better thread lifecycle handling
+- Safer teardown for fetch/download threads
+
+#### 🧪 Robust Configuration System
+- Handles missing/malformed paths
+- Persists default save location and auto-shutdown preference
+
+#### 🖥️ Clean UI Layouts
+- Grouped controls with clear hierarchy
+- Icons for toggling log and advanced settings views
+- Updated default save folder logic with path validation
 
 ## 📢 v1.2.0 – Audio Only Downloads
 
