@@ -5,12 +5,13 @@ Download single videos or entire playlists in your choice of Video resolutions o
 
 ---
 
-## 🚀 Features (v1.3.0)
+## 🚀 Features (v1.4.0)
 
 ### 🎥 Playlist & Video Downloading
 - Download entire YouTube playlists or single videos
-- Choose from **1080p**, **720p**, **480p**, **360p**, or **MP3**
+- Choose from **Best available**, **4320p (8K)**, **2160p (4K)**, **1440p (2K)**, **1080p**, **720p**, **480p**, **360p**, or **MP3**
 - Global format selector + per-video format override
+- Automatic container selection: **.mkv** above 1080p, **.mp4** at 1080p and below
 
 ### 💡 Enhanced UI & Experience
 - 🔍 **Real-time Playlist Search** with live filtering
@@ -27,37 +28,44 @@ Download single videos or entire playlists in your choice of Video resolutions o
 - 💾 User settings (default path, shutdown, etc.) persist via config
 - 🧠 Smart default folder fallback: `~/Videos/QuickYTDL Downloads`
 
----
-
-## 📢 New in v1.3.0
-
-- 🆕 **Download Progress Redesign**  
-  - Live ETA, speed, and percentage using visually styled blocks  
-  - Per-row progress delegate with cancel button  
-
-- 🧠 **Improved Search & Filter**  
-  - Toggle between URL input and search bar  
-  - Fuzzy title filtering based on keyword match  
-
-- 📋 **Unified Signal Management**  
-  - Better thread lifecycle handling  
-  - Safer teardown for fetch/download threads  
-
-- 🧪 **Robust Configuration System**  
-  - Handles missing/malformed paths  
-  - Persists default save location and auto-shutdown preference  
-
-- 🖥️ **Clean UI Layouts**  
-  - Grouped controls with clear hierarchy  
-  - Icons for toggling log and advanced settings views  
-  - Updated default save folder logic with path validation
+### 📦 Distribution
+- 🖥️ Single-file **Windows executable** built from a committed PyInstaller spec
+- 🧰 **MSI installer** with Start Menu / Desktop shortcuts and clean upgrades
 
 ---
-<img width="1920" height="1030" alt="" src="https://github.com/user-attachments/assets/e133881a-8dc7-4bac-815f-3f8777a8dcfa" />
-<img width="1920" height="1030" alt="" src="https://github.com/user-attachments/assets/36074e02-78fe-472f-9a05-c11fa12eece0" />
-<img width="1920" height="1030" alt="" src="https://github.com/user-attachments/assets/fc1468b7-7a33-4613-aec4-063b2ab60021" />
-<img width="1920" height="1032" alt="" src="https://github.com/user-attachments/assets/4bf04dc7-9b37-4ded-8a43-de92d88352cf" />
-<img width="1920" height="1030" alt="" src="https://github.com/user-attachments/assets/d57d10e7-98d0-44bc-af85-4ab58a0d3994" />
+
+## 📢 New in v1.4.0
+
+### 🆕 High-Resolution Downloads
+- Added **1440p**, **2160p (4K)** and **4320p (8K)** tiers
+- New **Best available** option — now the default — always takes the highest quality a video offers
+- Tiers above 1080p are saved as **.mkv**; YouTube publishes no MP4 above 1080p, since those streams are VP9 or AV1 and an MP4 container cannot hold them
+- 1080p and below continue to produce **.mp4** exactly as before
+
+### 🎯 Smarter Format Selection
+- Quality selection now uses yt-dlp's `format_sort` instead of a hard height filter
+- Requesting a resolution a video doesn't offer falls back to the next best available, rather than failing with *Requested format is not available*
+- Format detection no longer scans for MP4 streams only — an MP4-only scan silently capped every video at 1080p
+- Non-standard encode heights are snapped onto the nearest standard tier
+- All quality/container logic consolidated into a single `quickytdl/formats.py` module
+
+### 🐛 Fixes
+- **Per-video format override** is now respected; the global selector previously overwrote every row's choice when the download started
+- **Window and taskbar icon** now resolve correctly in the packaged executable via a `resource_path()` helper that handles PyInstaller's `sys._MEIPASS`
+- **Crash guard** installed for unhandled exceptions, which PyQt6 otherwise turns into an instant `abort()` of the whole app
+- Download worker refactored so no exception can escape `QThread.run()`
+- Fixed a possible divide-by-zero in the progress bar delegate
+
+### 📦 Packaging & Build
+- Added `QuickYTDL.spec` — build the executable with a single `pyinstaller QuickYTDL.spec`
+- Bundles ffmpeg and the app resources; registers yt-dlp's extractors as hidden imports so the frozen build doesn't fail with *Unsupported URL*
+- Added `Build-Installer.ps1` and `installer/` to produce an MSI via WiX
+- MSI installs per-machine, creates Start Menu and Desktop shortcuts, registers in Apps & Features, and upgrades cleanly over previous versions
+- Supports silent install: `msiexec /i "QuickYTDL-1.4.0-x64.msi" /qn`
+
+### ⬆️ Dependencies
+- PyQt6 **6.5.2 → 6.9.1**
+- yt-dlp **2025.4.30 → 2026.8.19**
 
 ---
 
