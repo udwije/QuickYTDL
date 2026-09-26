@@ -43,9 +43,6 @@
     <Property Id="ARPPRODUCTICON" Value="QuickYTDLIcon" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/udwije/QuickYTDL" />
 
-    <!-- Pre-seed the install dir browser with our default. -->
-    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
-
     <!--
       Installs to Program Files (64-bit). The PyInstaller output is a
       64-bit binary, so this is the correct hive - using ProgramFilesFolder
