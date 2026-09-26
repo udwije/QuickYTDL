@@ -2,8 +2,25 @@
 
 import os
 import re
+import sys
 from datetime import timedelta, datetime
 from pathlib import Path
+
+
+def resource_path(*parts: str) -> str:
+    """
+    Resolve a path to a bundled resource (icon, image, etc.) that works both:
+      - when running from source (python main.py), and
+      - when frozen into a single-file PyInstaller .exe, where bundled
+        data lives in a temp extraction dir exposed as sys._MEIPASS.
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base = sys._MEIPASS
+    else:
+        # project root = one directory above this file's package (quickytdl/..)
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, *parts)
+
 
 def sanitize_filename(filename: str) -> str:
     """

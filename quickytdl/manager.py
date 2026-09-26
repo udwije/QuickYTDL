@@ -6,6 +6,7 @@ from yt_dlp import YoutubeDL
 import imageio_ffmpeg as _iioffmpeg
 # helper to strip illegal filename characters & format sizes
 from quickytdl.utils import sanitize_filename
+from quickytdl import formats
 
 _download_semaphore = QSemaphore(4)  #  max 4 concurrent downloads
 
@@ -63,23 +64,12 @@ class DownloadWorker(QThread):
             self.finished.emit(self.index, "Failed")
             return
 
-        # 3) Build format string based on user choice
+        # 3) Build format options based on user choice.
+        # Delegated to quickytdl.formats so the tier list, the container
+        # rule (MKV above 1080p) and the graceful-degrade sort all live in
+        # one place.
         selected = self.selected_format
-        if selected == "mp3":
-            # audio‐only
-            fmt = "bestaudio/best"
-        elif selected in ["1080p", "720p", "480p", "360p"]:
-            # exact MP4 @HEIGHT + best M4A audio,
-            # fallback to <=HEIGHT MP4+M4A, then any MP4
-            height = int(selected.rstrip("p"))
-            fmt = (
-                f"bestvideo[height={height}][ext=mp4]+bestaudio[ext=m4a]/"
-                f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/"
-                f"best[ext=mp4]"
-            )
-        else:
-            # last‐resort
-            fmt = "best"
+        format_opts = formats.build_format_opts(selected)
 
         # 4) Safe output template
         safe_title = sanitize_filename(self.item.title)
@@ -92,15 +82,16 @@ class DownloadWorker(QThread):
         # 5) YDL opts (embed the bundled FFmpeg and enable progress hooks)
         from imageio_ffmpeg import get_ffmpeg_exe
         ydl_opts = {
-            "format": fmt,
             "outtmpl": outtmpl,
             "quiet": True,
             "ffmpeg_location": get_ffmpeg_exe(),
             "progress_hooks": [self._progress_hook],
         }
+        # format / format_sort / merge_output_format
+        ydl_opts.update(format_opts)
 
         # 6) MP3 postprocessing (only if MP3 selected)
-        if selected == "mp3":
+        if selected == formats.MP3:
             ydl_opts["postprocessors"] = [{
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
@@ -111,7 +102,11 @@ class DownloadWorker(QThread):
                 ydl_opts["postprocessor_args"] = ["-ar", str(sr)]
 
         # 7) Start download
-        self.log.emit(f"⏬ Download #{self.item.index}: {self.item.title} [{selected}]")
+        container = formats.container_for(selected)
+        self.log.emit(
+            f"⏬ Download #{self.item.index}: {self.item.title} "
+            f"[{selected}{'' if selected == formats.MP3 else f' → {container}'}]"
+        )
         try:
             with YoutubeDL(ydl_opts) as ydl:
                 ydl.download([self.url])

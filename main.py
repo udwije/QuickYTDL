@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QLoggingCategory
 from PyQt6.QtGui import QIcon
 from quickytdl.ui.main_window import MainWindow
+from quickytdl.utils import resource_path
 
 
 def _install_crash_guard():
@@ -40,7 +41,7 @@ def main():
     app = QApplication(sys.argv)
 
     # Set the application icon from resources
-    icon_path = os.path.join(os.path.dirname(__file__), "resources", "QuickYTDL.png")
+    icon_path = resource_path("resources", "QuickYTDL.png")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 

@@ -1,9 +1,23 @@
 # quickytdl/fetcher.py
 
 import re
+from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 from PyQt6.QtCore import QObject, pyqtSignal
 from yt_dlp import YoutubeDL
+
+from quickytdl import formats
+
+
+def _nearest_tier(height: int):
+    """
+    Map a reported height onto the closest standard tier at or below it,
+    so non-standard encodes still land in a bucket the UI offers.
+    """
+    for h in formats.VIDEO_HEIGHTS:          # descending
+        if height >= h:
+            return f"{h}p"
+    return None
 
 
 class VideoItem:
@@ -15,12 +29,24 @@ class VideoItem:
         title (str): Video title (or fallback to ID).
         available_formats (list[str]): Resolutions like '1080p', plus 'mp3'.
         url (str): The video URL for downloading.
+        source_url (str): The URL the user actually supplied. For a batch
+            entry expanded out of a playlist this is the playlist URL, not
+            the individual video — it's what groups rows together so the
+            user can drop the rest of an unwanted playlist.
+        source_title (str): Human label for that source (playlist title).
+        from_playlist (bool): True when this row came from expanding a
+            playlist rather than being a URL the user typed directly.
     """
-    def __init__(self, index: int, title: str, available_formats: list[str], url: str):
+    def __init__(self, index: int, title: str, available_formats: list[str], url: str,
+                 source_url: str = None, source_title: str = None,
+                 from_playlist: bool = False):
         self.index = index
         self.title = title
         self.available_formats = available_formats
         self.url = url
+        self.source_url = source_url or url
+        self.source_title = source_title or title
+        self.from_playlist = from_playlist
         # The following are set by the UI/models:
         # self.selected, self.selected_format, self.progress, self.status, self.sample_rate
 
@@ -44,9 +70,257 @@ class PlaylistFetcher(QObject):
             'no_warnings': True,
             'extract_flat': True,
         }
-        # Fallback formats if no MP4 heights are found
-        self.default_formats = ["1080p", "720p", "480p", "360p"]
+        # Fallback tiers if no per-video heights are found.
+        # extract_flat is on for speed, so entries rarely carry a 'formats'
+        # list and this fallback is the usual path.
+        self.default_formats = list(formats.VIDEO_FORMATS)
         self.last_playlist_title = None
+
+    # ------------------------------------------------------------------
+    # Shared entry -> VideoItem conversion
+    # ------------------------------------------------------------------
+
+    def _build_item(self, entry: dict, index: int,
+                    source_url: str = None, source_title: str = None,
+                    from_playlist: bool = False) -> VideoItem | None:
+        """
+        Turn a single yt-dlp entry into a VideoItem.
+
+        Shared by fetch_playlist() and fetch_urls() so both paths produce
+        identical format lists. `index` is 1-based and is used both for the
+        "Video No" column and the NNN- filename prefix, so callers must
+        assign it across the whole batch, not per source URL.
+        """
+        if entry is None:
+            return None
+
+        title = entry.get('title') or entry.get('id') or f"Video #{index}"
+
+        # Build available_formats: look for video heights.
+        # Do NOT filter on ext == 'mp4' here. YouTube publishes nothing
+        # above 1080p as MP4 — 1440p/2160p/4320p are VP9 or AV1 in WebM
+        # — so an MP4-only scan silently caps the list at 1080p. Accept
+        # any stream that carries a real video track instead, and let
+        # the container get decided at download time.
+        fmts = entry.get('formats') if isinstance(entry.get('formats'), list) else None
+        heights = set()
+        if fmts:
+            for f in fmts:
+                h = f.get('height')
+                if h and f.get('vcodec') not in (None, 'none'):
+                    heights.add(f"{h}p")
+            # Snap odd heights (e.g. 1082) onto the nearest standard tier
+            # so the combo never shows resolutions the UI can't request.
+            heights = {
+                t for t in (
+                    _nearest_tier(int(s.rstrip('p'))) for s in heights
+                ) if t
+            }
+        if not heights:
+            heights = set(self.default_formats)
+
+        # 'best' first, then descending resolution, MP3 last.
+        available_formats = formats.sorted_formats(
+            {formats.BEST} | heights | {formats.MP3}
+        )
+
+        video_url = entry.get('webpage_url') or entry.get('id')
+        return VideoItem(
+            index, title, available_formats, video_url,
+            source_url=source_url or video_url,
+            source_title=source_title or title,
+            from_playlist=from_playlist,
+        )
+
+    def _extract(self, url: str):
+        """
+        Flat-extract a single URL.
+
+        Returns (entries, is_playlist, source_title). A bare video yields a
+        single-entry list with is_playlist False; a playlist yields all of
+        its entries with is_playlist True, so the UI can group the rows and
+        let the user drop a playlist they didn't mean to expand.
+
+        Raises on failure so callers can decide whether one bad URL should
+        abort the whole batch.
+        """
+        with YoutubeDL(self.ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+
+        entries = info.get('entries') or []
+        is_playlist = bool(entries)
+
+        if not entries:
+            parsed = urlparse(url)
+            list_id = parse_qs(parsed.query).get('list', [None])[0]
+            if list_id:
+                playlist_url = f"https://www.youtube.com/playlist?list={list_id}"
+                with YoutubeDL(self.ydl_opts) as ydl2:
+                    info = ydl2.extract_info(playlist_url, download=False)
+                entries = info.get('entries') or []
+                is_playlist = bool(entries)
+            else:
+                # Plain single video.
+                entries = [info]
+
+        entries = [e for e in entries if e is not None]
+
+        # A "playlist" that resolved to exactly one video is not worth
+        # grouping — treat it as a single video.
+        if len(entries) <= 1:
+            is_playlist = False
+
+        title = info.get('title') or info.get('playlist_title') or url
+        return entries, is_playlist, title
+
+    def fetch_urls(self, urls: list[str], max_workers: int = 5,
+                   expand_playlists: bool = True,
+                   preselect_playlists: bool = True) -> list[VideoItem]:
+        """
+        Fetch metadata for an arbitrary list of URLs (batch mode).
+
+        Unlike fetch_playlist(), the URLs are unrelated: each is extracted
+        independently and the results are concatenated into one list.
+
+        Behaviour that matters:
+          * URLs are fetched concurrently — serial extraction of 30 URLs
+            would freeze the fetch step for ~30s.
+          * A URL that fails is logged and skipped; it never aborts the
+            batch. Private/deleted videos are common in pasted lists.
+          * Duplicates are removed, preserving first-seen order.
+          * A pasted playlist URL is expanded inline, since that costs
+            nothing and matches what users expect.
+          * Indices are assigned sequentially across the whole batch so
+            the NNN- filename prefixes never collide.
+
+        Playlist handling:
+          * expand_playlists=False keeps only the first video of any URL
+            that turns out to be a playlist, for users who pasted a watch
+            URL that happened to carry a ?list= param.
+          * preselect_playlists=False leaves playlist-expanded rows
+            unticked, so a 200-video playlist never downloads by accident;
+            the user opts in per row (or via the source context menu).
+          Rows carry source_url/source_title/from_playlist so the UI can
+          group them.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        # Dedupe, preserve order.
+        seen = set()
+        ordered: list[str] = []
+        for u in urls:
+            u = (u or "").strip()
+            if u and u not in seen:
+                seen.add(u)
+                ordered.append(u)
+
+        if not ordered:
+            self.log.emit("⚠️ No valid URLs provided.")
+            self.last_playlist_title = None
+            return []
+
+        total = len(ordered)
+        dropped = len(urls) - total
+        if dropped > 0:
+            self.log.emit(f"🔍 {total} unique URL(s) to fetch ({dropped} duplicate/blank removed).")
+        else:
+            self.log.emit(f"🔍 {total} URL(s) to fetch.")
+
+        # Extract concurrently, but keep results in input order.
+        results: list[list[dict] | None] = [None] * total
+        errors: list[tuple[str, str]] = []
+
+        def work(i_url):
+            i, u = i_url
+            try:
+                return i, self._extract(u), None
+            except Exception as e:                       # noqa: BLE001
+                return i, None, str(e)
+
+        workers = max(1, min(max_workers, total))
+        playlist_sources = []          # (url, title, count) for the summary
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            done = 0
+            for i, payload, err in pool.map(work, enumerate(ordered)):
+                done += 1
+                url = ordered[i]
+                if err is not None:
+                    errors.append((url, err))
+                    self.log.emit(f"  ❌ [{done}/{total}] Failed: {url}\n      {err}")
+                    continue
+
+                entries, is_playlist, src_title = payload
+                # A "playlist" holding a single video isn't worth grouping;
+                # enforce here as well as in _extract so the rule holds no
+                # matter which extraction path produced the payload.
+                if is_playlist and len(entries) <= 1:
+                    is_playlist = False
+                if is_playlist and not expand_playlists:
+                    entries = entries[:1]
+                    is_playlist = False
+                    self.log.emit(
+                        f"  • [{done}/{total}] Playlist collapsed to first video: {src_title}"
+                    )
+                elif is_playlist:
+                    playlist_sources.append((url, src_title, len(entries)))
+                    self.log.emit(
+                        f"  ⚠️ [{done}/{total}] '{src_title}' is a PLAYLIST — "
+                        f"{len(entries)} videos from: {url}"
+                    )
+                else:
+                    label = entries[0].get('title') if entries else url
+                    self.log.emit(f"  • [{done}/{total}] {label}")
+
+                results[i] = (entries, is_playlist, src_title)
+
+        # Flatten in input order, numbering across the whole batch.
+        items: list[VideoItem] = []
+        for idx, payload in enumerate(results):
+            if not payload:
+                continue
+            entries, is_playlist, src_title = payload
+            src_url = ordered[idx]
+            for entry in entries:
+                item = self._build_item(
+                    entry, len(items) + 1,
+                    source_url=src_url,
+                    source_title=src_title if is_playlist else None,
+                    from_playlist=is_playlist,
+                )
+                if item is None:
+                    continue
+                # Playlist rows can start unticked so a large playlist is
+                # never downloaded by accident.
+                item.selected = True if not is_playlist else bool(preselect_playlists)
+                items.append(item)
+
+        # No playlist title exists for a batch, so give the UI a stable
+        # date-stamped folder name instead of leaving it blank (which would
+        # dump every file into the save-path root).
+        self.last_playlist_title = f"Batch {datetime.now():%Y-%m-%d}"
+
+        if playlist_sources:
+            self.log.emit(
+                f"\n📋 {len(playlist_sources)} of your URL(s) expanded into playlists:"
+            )
+            for url, title, count in playlist_sources:
+                self.log.emit(f"  • '{title}' → {count} videos")
+            self.log.emit(
+                "  Right-click any row to select/deselect a whole source, "
+                "or untick rows you don't want."
+            )
+
+        if errors:
+            self.log.emit(
+                f"\n✅ Completed metadata for {len(items)} video(s); "
+                f"{len(errors)} URL(s) failed:"
+            )
+            for url, err in errors:
+                self.log.emit(f"  ❌ {url}")
+        else:
+            self.log.emit(f"\n✅ Completed metadata for {len(items)} video(s).\n")
+
+        return items
 
     def fetch_playlist(self, url: str) -> list[VideoItem]:
         """
@@ -101,35 +375,14 @@ class PlaylistFetcher(QObject):
                 self.log.emit(f"  ⚠️ Skipping empty entry at position {i}")
                 continue
 
-            # Title (fallback to ID)
             title = entry.get('title') or entry.get('id') or f"Video #{i}"
             self.log.emit(f"  • Processing [{i}/{total}]: {title}")
 
-            # Build available_formats: look for MP4 heights
-            fmts = entry.get('formats') if isinstance(entry.get('formats'), list) else None
-            heights = set()
-            if fmts:
-                for f in fmts:
-                    h = f.get('height')
-                    if h and f.get('ext') == 'mp4':
-                        heights.add(f"{h}p")
-            if not heights:
-                self.log.emit("    – No MP4 formats found, using defaults.")
-                heights = set(self.default_formats)
-
-            available_formats = sorted(
-                heights,
-                key=lambda s: int(s.rstrip('p')),
-                reverse=True
-            )
-
-            # Always allow MP3
-            if "mp3" not in available_formats:
-                available_formats.append("mp3")
-
-            video_url = entry.get('webpage_url') or entry.get('id')
-            items.append(VideoItem(i, title, available_formats, video_url))
-            self.log.emit(f"    – Formats: {', '.join(available_formats)}")
+            item = self._build_item(entry, len(items) + 1)
+            if item is None:
+                continue
+            items.append(item)
+            self.log.emit(f"    – Formats: {', '.join(item.available_formats)}")
 
         self.log.emit(f"✅ Completed metadata for {len(items)} videos.\n")
         return items

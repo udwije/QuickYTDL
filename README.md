@@ -9,7 +9,12 @@ Download single videos or entire playlists in your choice of Video resolutions o
 
 ### 🎥 Playlist & Video Downloading
 - Download entire YouTube playlists or single videos
-- Choose from **1080p**, **720p**, **480p**, **360p**, or **MP3**
+- 📋 **Batch mode** — paste a list of unrelated video URLs and fetch them all at once
+- 🛡️ Playlist URLs in a batch are flagged, grouped and left **unticked** by default, so a stray `?list=` never downloads hundreds of videos
+- 🖱️ Right-click any row to select/deselect an entire source, keep only one source, or keep just one video
+- Choose from **Best available**, **4320p (8K)**, **2160p (4K)**, **1440p (2K)**, **1080p**, **720p**, **480p**, **360p**, or **MP3**
+- Tiers above 1080p are saved as **.mkv** (YouTube publishes no MP4 above 1080p); 1080p and below stay **.mp4**
+- If an item doesn't offer the chosen resolution, the next best available is used instead of failing
 - Global format selector + per-video format override
 
 ### 💡 Enhanced UI & Experience
@@ -128,12 +133,18 @@ python main.py
 ```
 
 (Optional) Bundle into a Single Executable
+
 ```bash
-pyinstaller --onefile --windowed \
-  --icon quickytdl/resources/QuickYTDL.ico \
-  --add-data "path\to\imageio_ffmpeg;imageio_ffmpeg" \
-  main.py
+pip install pyinstaller
+pyinstaller QuickYTDL.spec
 ```
+
+This produces `dist/QuickYTDL.exe` — a single-file, windowed executable with the
+app icon, version metadata, and the bundled ffmpeg binary all included, so it
+runs standalone with no separate install step. Rebuild after any code change
+by re-running the same command (delete the `build/` and `dist/` folders first
+if PyInstaller ever seems to be using stale cached files).
+
 ---
 ## ⚠️ Disclaimer
 

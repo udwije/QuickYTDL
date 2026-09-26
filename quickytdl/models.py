@@ -8,9 +8,9 @@ from PyQt6.QtCore import (
 class PlaylistTableModel(QAbstractTableModel):
     """
     Table model for the fetched playlist.
-    Columns: [Select, Video No, Description, Format]
+    Columns: [Select, Video No, Description, Source, Format]
     """
-    HEADERS = ["Select", "Video No", "Description", "Format"]
+    HEADERS = ["Select", "Video No", "Description", "Source", "Format"]
 
     def __init__(self, items=None):
         super().__init__()
@@ -42,9 +42,23 @@ class PlaylistTableModel(QAbstractTableModel):
         if col == 2 and role == Qt.ItemDataRole.DisplayRole:
             return item.title
 
+        # Source (which pasted URL this row came from)
+        if col == 3 and role == Qt.ItemDataRole.DisplayRole:
+            if getattr(item, 'from_playlist', False):
+                return getattr(item, 'source_title', '') or ''
+            return ''
+
         # Format (editable combo box)
-        if col == 3 and role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
+        if col == 4 and role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             return item.selected_format
+
+        # Tooltip: show the originating URL on any column.
+        if role == Qt.ItemDataRole.ToolTipRole:
+            src = getattr(item, 'source_url', None)
+            if getattr(item, 'from_playlist', False):
+                return (f"From playlist: {getattr(item, 'source_title', '')}\n{src}\n"
+                        f"Right-click to select/deselect this whole playlist.")
+            return src or None
 
         return None
 
@@ -63,13 +77,64 @@ class PlaylistTableModel(QAbstractTableModel):
                 | Qt.ItemFlag.ItemIsSelectable
                 | Qt.ItemFlag.ItemIsUserCheckable
             )
-        if col == 3:
+        if col == 4:
             return (
                 Qt.ItemFlag.ItemIsEnabled
                 | Qt.ItemFlag.ItemIsEditable
                 | Qt.ItemFlag.ItemIsSelectable
             )
         return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+
+    # ------------------------------------------------------------------
+    # Source-group helpers (batch mode)
+    # ------------------------------------------------------------------
+
+    def sources(self) -> list:
+        """
+        Distinct (source_url, source_title, count, from_playlist) in the
+        order they first appear. Used to drive the source context menu.
+        """
+        out, seen = [], {}
+        for it in self._items:
+            key = getattr(it, 'source_url', None) or it.url
+            if key not in seen:
+                seen[key] = len(out)
+                out.append([key, getattr(it, 'source_title', '') or it.title,
+                            0, bool(getattr(it, 'from_playlist', False))])
+            out[seen[key]][2] += 1
+        return [tuple(r) for r in out]
+
+    def set_source_selected(self, source_url: str, selected: bool) -> int:
+        """
+        Tick/untick every row belonging to one source URL.
+        Returns how many rows changed.
+        """
+        changed = 0
+        for row, it in enumerate(self._items):
+            key = getattr(it, 'source_url', None) or it.url
+            if key == source_url and bool(it.selected) != bool(selected):
+                it.selected = bool(selected)
+                changed += 1
+        if changed:
+            top = self.index(0, 0)
+            bot = self.index(self.rowCount() - 1, self.columnCount() - 1)
+            self.dataChanged.emit(top, bot, [Qt.ItemDataRole.CheckStateRole])
+        return changed
+
+    def keep_only_source(self, source_url: str) -> int:
+        """Select every row of one source and deselect all others."""
+        changed = 0
+        for it in self._items:
+            key = getattr(it, 'source_url', None) or it.url
+            want = (key == source_url)
+            if bool(it.selected) != want:
+                it.selected = want
+                changed += 1
+        if changed:
+            top = self.index(0, 0)
+            bot = self.index(self.rowCount() - 1, self.columnCount() - 1)
+            self.dataChanged.emit(top, bot, [Qt.ItemDataRole.CheckStateRole])
+        return changed
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if not index.isValid():
@@ -84,9 +149,12 @@ class PlaylistTableModel(QAbstractTableModel):
             return True
 
         # change selected format
-        if col == 3 and role == Qt.ItemDataRole.EditRole:
+        if col == 4 and role == Qt.ItemDataRole.EditRole:
             if value in item.available_formats:
                 item.selected_format = value
+                # Mark it so the global Format selector no longer clobbers
+                # this row when the download starts.
+                item.format_overridden = True
                 self.dataChanged.emit(index, index, [role])
                 return True
 
