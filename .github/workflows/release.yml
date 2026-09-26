@@ -100,8 +100,9 @@ jobs:
       - name: Install WiX
         if: steps.installer.outputs.present == 'true'
         run: |
-          dotnet tool install --global wix
-          wix extension add --global WixToolset.UI.wixext
+          dotnet tool install --global wix --version 5.0.2
+          wix --version
+          wix extension add --global WixToolset.UI.wixext/5.0.2
 
       - name: Build the MSI
         if: steps.installer.outputs.present == 'true'
