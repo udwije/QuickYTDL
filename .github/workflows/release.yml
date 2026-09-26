@@ -1,0 +1,179 @@
+name: Release
+
+# Publish a Windows build whenever a version tag is pushed:
+#
+#     git tag v1.7.1
+#     git push origin v1.7.1
+#
+# Can also be run by hand from the Actions tab, which is useful for
+# rehearsing a release without creating a tag.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, e.g. 1.7.1 (no tag is created)'
+        required: true
+        type: string
+      draft:
+        description: 'Publish the GitHub Release as a draft'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write        # needed to create the Release and upload assets
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Resolve the version
+        id: version
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'push') {
+            # refs/tags/v1.7.1 -> 1.7.1
+            $v = '${{ github.ref_name }}' -replace '^v', ''
+          } else {
+            $v = '${{ inputs.version }}' -replace '^v', ''
+          }
+          if ($v -notmatch '^\d+\.\d+\.\d+$') {
+            Write-Error "Version '$v' is not MAJOR.MINOR.PATCH"
+            exit 1
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Building version $v"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Stamp the version into version_info.txt
+        run: python tools/set_version.py ${{ steps.version.outputs.version }}
+
+      - name: Sanity checks
+        # Cheap guards that catch the mistakes which only show up at launch:
+        # syntax errors, and widgets read before they are constructed.
+        run: |
+          python -m compileall -q .
+          python tools/check_init_order.py
+          python tools/check_theme.py
+
+      - name: Build the executable
+        run: pyinstaller QuickYTDL.spec
+
+      - name: Verify the executable exists
+        shell: pwsh
+        run: |
+          $exe = 'dist\QuickYTDL.exe'
+          if (-not (Test-Path $exe)) { Write-Error "$exe was not produced"; exit 1 }
+          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          Write-Host "Built $exe ($mb MB)"
+
+      # --- MSI (skipped automatically if the installer sources aren't present) ---
+      - name: Check for installer sources
+        id: installer
+        shell: pwsh
+        run: |
+          $present = (Test-Path 'installer\QuickYTDL.wxs') -and (Test-Path 'installer\License.rtf')
+          "present=$($present.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          if (-not $present) {
+            Write-Host '::notice::installer/ not found - skipping MSI, shipping the .exe only.'
+          }
+
+      - name: Install WiX
+        if: steps.installer.outputs.present == 'true'
+        run: |
+          dotnet tool install --global wix
+          wix extension add --global WixToolset.UI.wixext
+
+      - name: Build the MSI
+        if: steps.installer.outputs.present == 'true'
+        shell: pwsh
+        run: |
+          $v = '${{ steps.version.outputs.version }}'
+          wix build installer\QuickYTDL.wxs `
+            -arch x64 `
+            -ext WixToolset.UI.wixext `
+            -d ExeSource="$PWD\dist\QuickYTDL.exe" `
+            -d IconSource="$PWD\resources\QuickYTDL.ico" `
+            -d LicenseSource="$PWD\installer\License.rtf" `
+            -d ProductVersion="$v" `
+            -o "dist\QuickYTDL-$v-x64.msi"
+
+      - name: Name the artifacts
+        id: names
+        shell: pwsh
+        run: |
+          $v = '${{ steps.version.outputs.version }}'
+          Rename-Item 'dist\QuickYTDL.exe' "QuickYTDL-$v-x64.exe"
+          Get-ChildItem dist | Select-Object Name, Length | Format-Table
+
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          Push-Location dist
+          Get-ChildItem -Include *.exe,*.msi -Recurse |
+            ForEach-Object {
+              $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+              "$h  $($_.Name)"
+            } | Set-Content -Encoding ascii SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+          Pop-Location
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickYTDL-${{ steps.version.outputs.version }}-windows
+          path: |
+            dist/*.exe
+            dist/*.msi
+            dist/SHA256SUMS.txt
+          retention-days: 30
+
+      - name: Publish the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', steps.version.outputs.version) }}
+          name: QuickYTDL ${{ steps.version.outputs.version }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
+          generate_release_notes: true
+          files: |
+            dist/*.exe
+            dist/*.msi
+            dist/SHA256SUMS.txt
+          body: |
+            ## QuickYTDL ${{ steps.version.outputs.version }}
+
+            ### Downloads
+            | File | Use it for |
+            |---|---|
+            | `QuickYTDL-${{ steps.version.outputs.version }}-x64.msi` | Normal install (Start Menu + Desktop shortcuts, clean upgrades) |
+            | `QuickYTDL-${{ steps.version.outputs.version }}-x64.exe` | Portable - run it straight from the file |
+
+            Verify your download against `SHA256SUMS.txt`.
+
+            ### Recommended
+            Install a JavaScript runtime so YouTube offers every format:
+
+            ```
+            winget install --id=DenoLand.Deno
+            ```
+
+            Without one, higher resolutions may be unavailable - see BUILD.md.

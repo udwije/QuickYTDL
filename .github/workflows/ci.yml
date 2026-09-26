@@ -1,0 +1,85 @@
+name: CI
+
+# Fast checks on every push and pull request, so a broken build is caught
+# before you try to cut a release rather than during it.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile all sources
+        run: python -m compileall -q .
+
+      - name: Check widget construction order
+        # MainWindow reads a lot of self.X during __init__; reading one
+        # before it is assigned only fails at launch, never at import.
+        run: python tools/check_init_order.py
+
+      - name: Import smoke test
+        # Catches bad imports and module-level errors without needing a
+        # display. QApplication is never constructed, so this is headless.
+        run: |
+          python -c "import quickytdl.formats, quickytdl.config, quickytdl.utils; print('core modules import OK')"
+          python -c "from quickytdl.ui import theme; assert theme.stylesheet(False) and theme.stylesheet(True); print('themes render OK')"
+
+      - name: Verify the theme
+        run: python tools/check_theme.py
+
+  build:
+    # Proves the packaged app still builds; the artifact is handy for
+    # testing a change before tagging it.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build the executable
+        run: pyinstaller QuickYTDL.spec
+
+      - name: Verify the executable exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'dist\QuickYTDL.exe')) {
+            Write-Error 'dist\QuickYTDL.exe was not produced'; exit 1
+          }
+          $mb = [math]::Round((Get-Item 'dist\QuickYTDL.exe').Length / 1MB, 1)
+          Write-Host "Built dist\QuickYTDL.exe ($mb MB)"
+
+      - name: Upload the development build
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuickYTDL-dev-${{ github.sha }}
+          path: dist/QuickYTDL.exe
+          retention-days: 7

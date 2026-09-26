@@ -69,3 +69,57 @@ QuickYTDL also auto-detects Node or QuickJS on PATH and enables it for
 yt-dlp explicitly, so any one of the three is enough. If none is found,
 the app logs a one-line notice at startup and continues with reduced
 format availability.
+
+## Sanity checks before a release
+
+```bash
+python -m compileall -q .
+python tools/check_init_order.py
+```
+
+`check_init_order.py` flags any `self.X` that `MainWindow.__init__` or
+`_build_ui` reads before assigning. Qt widget construction is order
+sensitive and this class of mistake only surfaces at runtime, as an
+`AttributeError` on launch.
+
+## Releasing
+
+Releases are built by GitHub Actions on Windows runners, so you don't need a
+local toolchain to publish one.
+
+### Cut a release
+
+```bash
+git tag v1.7.1
+git push origin v1.7.1
+```
+
+That triggers `.github/workflows/release.yml`, which:
+
+1. derives the version from the tag (`v1.7.1` -> `1.7.1`);
+2. stamps it into `version_info.txt` with `tools/set_version.py`, so the
+   executable's file version always matches the tag;
+3. runs the sanity checks (`compileall`, `check_init_order`, `check_theme`);
+4. builds `QuickYTDL.exe` from `QuickYTDL.spec`;
+5. builds the MSI, **if** `installer/` is present in the repo;
+6. writes `SHA256SUMS.txt`;
+7. publishes a GitHub Release with the artifacts attached and auto-generated
+   notes.
+
+### Rehearse without tagging
+
+Actions -> **Release** -> *Run workflow*, enter a version, and leave
+*draft* ticked. You get the same artifacts and a draft release you can
+delete afterwards.
+
+### Continuous checks
+
+`.github/workflows/ci.yml` runs on every push to `main` and on pull
+requests. It repeats the sanity checks and builds the executable, uploading
+it as a short-lived artifact so you can test a change before tagging it.
+
+### Note on the MSI
+
+The MSI step is skipped automatically when `installer/QuickYTDL.wxs` and
+`installer/License.rtf` are missing, and the release then ships the `.exe`
+only. Commit the `installer/` directory to enable it.
