@@ -92,3 +92,69 @@ def timestamped(message: str) -> str:
     """
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return f"[{ts}] {message}"
+
+
+# --------------------------------------------------------------------------
+# yt-dlp JavaScript runtime support
+# --------------------------------------------------------------------------
+
+# Runtimes yt-dlp can drive, best first. Only 'deno' is enabled by default;
+# the others work but must be switched on explicitly via the js_runtimes
+# option, which is exactly what enabled_js_runtimes() below does.
+#
+# Background: since yt-dlp 2025.11.12, YouTube extraction without a JS
+# runtime is deprecated. Without one, format availability is limited (and
+# worsens over time), so higher resolutions can silently go missing.
+#   deno     -> executable name 'deno'
+#   node     -> executable name 'node'
+#   bun      -> executable name 'bun'   (deprecated upstream)
+#   quickjs  -> executable name 'qjs'
+_JS_RUNTIME_EXES = (
+    ("deno", "deno"),
+    ("node", "node"),
+    ("quickjs", "qjs"),
+    ("bun", "bun"),
+)
+
+
+def find_js_runtime():
+    """
+    Return (runtime_name, executable_path) for the first available JS
+    runtime, or (None, None) if none is installed.
+    """
+    import shutil
+    for name, exe in _JS_RUNTIME_EXES:
+        path = shutil.which(exe)
+        if path:
+            return name, path
+    return None, None
+
+
+def enabled_js_runtimes():
+    """
+    Value for yt-dlp's `js_runtimes` option.
+
+    yt-dlp enables only deno by default, so a user with Node or QuickJS
+    installed would still get the "no supported JavaScript runtime" warning
+    and degraded formats. Explicitly enabling whatever we found avoids that.
+    Returns None when nothing is installed, so the caller can leave the
+    option alone.
+    """
+    name, path = find_js_runtime()
+    if not name:
+        return None
+    return {name: {"path": path}}
+
+
+def js_runtime_note():
+    """
+    One-line advisory to show at startup, or None when a runtime is present.
+    """
+    name, _ = find_js_runtime()
+    if name:
+        return None
+    return (
+        "⚠️ No JavaScript runtime found. YouTube may offer fewer formats, "
+        "so higher resolutions can go missing. Install Deno to fix it — "
+        "on Windows:  winget install --id=DenoLand.Deno"
+    )

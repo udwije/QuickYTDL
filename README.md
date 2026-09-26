@@ -12,6 +12,7 @@ Download single videos or entire playlists in your choice of Video resolutions o
 - 📋 **Batch mode** — paste a list of unrelated video URLs and fetch them all at once
 - 🛡️ Playlist URLs in a batch are flagged, grouped and left **unticked** by default, so a stray `?list=` never downloads hundreds of videos
 - 🖱️ Right-click any row to select/deselect an entire source, keep only one source, or keep just one video
+- ❓ **Confirmation prompt** before expanding playlist URLs in a batch, with a "first video only" option
 - Choose from **Best available**, **4320p (8K)**, **2160p (4K)**, **1440p (2K)**, **1080p**, **720p**, **480p**, **360p**, or **MP3**
 - Tiers above 1080p are saved as **.mkv** (YouTube publishes no MP4 above 1080p); 1080p and below stay **.mp4**
 - If an item doesn't offer the chosen resolution, the next best available is used instead of failing
@@ -21,7 +22,8 @@ Download single videos or entire playlists in your choice of Video resolutions o
 - 🔍 **Real-time Playlist Search** with live filtering
 - ✅ **Select/Deselect All** via header checkbox
 - ⏬ **Parallel Downloads** with per-row progress
-- 📶 Live speed and ETA shown per download
+- 📶 Live speed and ETA shown per download, as one continuous 0-100% bar across the video and audio streams
+- 🧩 Auto-detects an installed JavaScript runtime (Deno/Node/QuickJS) and enables it for yt-dlp
 - ❌ **Cancel individual downloads** mid-process
 - 📄 **Log viewer** for fetch and download status
 - ⚙️ **Auto-shutdown** option after downloads

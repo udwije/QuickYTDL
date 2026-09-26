@@ -51,3 +51,21 @@ Run `dist/QuickYTDL.exe` on a machine **without** Python installed, and check:
 - `QuickYTDL-crash-fix.patch` in the repo root is fully applied to this
   tree already. It is kept only for history — do not re-apply it, as it
   will conflict with `quickytdl/manager.py`.
+
+## JavaScript runtime (recommended)
+
+Since yt-dlp 2025.11.12, YouTube extraction without an external JavaScript
+runtime is deprecated: format availability is limited and degrades over
+time, so higher resolutions may silently go missing.
+
+Install Deno (recommended — it is the only runtime yt-dlp enables by
+default):
+
+```powershell
+winget install --id=DenoLand.Deno
+```
+
+QuickYTDL also auto-detects Node or QuickJS on PATH and enables it for
+yt-dlp explicitly, so any one of the three is enough. If none is found,
+the app logs a one-line notice at startup and continues with reduced
+format availability.

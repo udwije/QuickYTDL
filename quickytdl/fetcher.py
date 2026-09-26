@@ -7,6 +7,18 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from yt_dlp import YoutubeDL
 
 from quickytdl import formats
+from quickytdl.utils import enabled_js_runtimes
+
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+
+
+def _clean_error(msg) -> str:
+    """Strip ANSI colour codes and yt-dlp's 'ERROR: ' prefix from a message."""
+    text = _ANSI_RE.sub('', str(msg)).strip()
+    if text.upper().startswith('ERROR:'):
+        text = text[6:].strip()
+    return text
 
 
 def _nearest_tier(height: int):
@@ -68,13 +80,76 @@ class PlaylistFetcher(QObject):
             'quiet': True,
             'skip_download': True,
             'no_warnings': True,
-            'extract_flat': True,
+            # 'in_playlist' (not True): flatten only the entries *inside* a
+            # playlist, which keeps listing fast, but still fully resolve a
+            # single-video URL so we get its real title. With True, yt-dlp
+            # returns every URL as an unresolved stub and the UI ends up
+            # showing the 11-char video ID as the description.
+            'extract_flat': 'in_playlist',
+            # yt-dlp colourises its error strings; those escape codes end up
+            # as literal "[0;31m" junk in the log view.
+            'no_color': True,
         }
+        _js = enabled_js_runtimes()
+        if _js:
+            self.ydl_opts['js_runtimes'] = _js
         # Fallback tiers if no per-video heights are found.
-        # extract_flat is on for speed, so entries rarely carry a 'formats'
+        # playlist entries are flattened for speed, so they rarely carry a 'formats'
         # list and this fallback is the usual path.
         self.default_formats = list(formats.VIDEO_FORMATS)
         self.last_playlist_title = None
+
+    # ------------------------------------------------------------------
+    # URL helpers
+    # ------------------------------------------------------------------
+
+    # Auto-generated list IDs that YouTube will not serve as a playlist.
+    #   RD…   Mix / radio          RDMM… "My Mix"
+    #   UL…   user list stub       LL    Liked videos (private)
+    #   WL    Watch later (private)
+    _UNLISTABLE_PREFIXES = ('RD', 'UL', 'LL', 'WL')
+
+    @staticmethod
+    def _video_id(url: str):
+        """
+        Pull an 11-character YouTube video ID out of a URL, or None.
+        Handles watch?v=, youtu.be/, /shorts/, /embed/ and /live/.
+        """
+        if not url:
+            return None
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            return None
+
+        vid = parse_qs(parsed.query).get('v', [None])[0]
+        if not vid:
+            host = (parsed.netloc or '').lower()
+            path = (parsed.path or '').strip('/')
+            segments = path.split('/')
+            if 'youtu.be' in host:
+                vid = segments[0] if segments else None
+            elif segments and segments[0] in ('shorts', 'embed', 'live', 'v'):
+                vid = segments[1] if len(segments) > 1 else None
+
+        if vid and re.fullmatch(r'[0-9A-Za-z_-]{11}', vid):
+            return vid
+        return None
+
+    @classmethod
+    def _is_unlistable_playlist(cls, url: str) -> bool:
+        """
+        True when the ?list= param names a playlist YouTube generates on the
+        fly (Mix/radio, Liked, Watch later). These cannot be enumerated, so
+        we should go straight to the single video.
+        """
+        try:
+            list_id = parse_qs(urlparse(url or '').query).get('list', [None])[0]
+        except Exception:
+            return False
+        if not list_id:
+            return False
+        return list_id.upper().startswith(cls._UNLISTABLE_PREFIXES)
 
     # ------------------------------------------------------------------
     # Shared entry -> VideoItem conversion
@@ -132,7 +207,7 @@ class PlaylistFetcher(QObject):
             from_playlist=from_playlist,
         )
 
-    def _extract(self, url: str):
+    def _extract(self, url: str, want_playlist: bool = True):
         """
         Flat-extract a single URL.
 
@@ -141,11 +216,49 @@ class PlaylistFetcher(QObject):
         its entries with is_playlist True, so the UI can group the rows and
         let the user drop a playlist they didn't mean to expand.
 
-        Raises on failure so callers can decide whether one bad URL should
-        abort the whole batch.
+        want_playlist=False forces yt-dlp to ignore any ?list= param and
+        resolve only the video itself.
+
+        Robustness: many YouTube URLs carry a ?list= that points at a
+        *generated* playlist — Mixes/radio (RD…), "my mix" (RDMM…), likes
+        (LL), watch-later (WL). Those are not listable and yt-dlp errors
+        with e.g. "This playlist type is unviewable", which used to fail
+        the whole URL even though the video ID in it is perfectly good.
+        We now fall back to the bare video instead of losing the row.
+
+        Raises only when even the bare video cannot be resolved, so callers
+        can still treat that as a genuine failure.
         """
-        with YoutubeDL(self.ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        video_id = self._video_id(url)
+
+        # A generated/unviewable list is never worth trying to expand.
+        if want_playlist and self._is_unlistable_playlist(url) and video_id:
+            want_playlist = False
+
+        opts = dict(self.ydl_opts)
+        if not want_playlist:
+            opts['noplaylist'] = True
+
+        def run(target, o):
+            with YoutubeDL(o) as ydl:
+                return ydl.extract_info(target, download=False)
+
+        try:
+            info = run(url, opts)
+        except Exception:
+            # Playlist resolution blew up. If the URL still identifies a
+            # single video, salvage it rather than dropping the row.
+            if not video_id:
+                raise
+            fallback = dict(self.ydl_opts)
+            fallback['noplaylist'] = True
+            info = run(f"https://www.youtube.com/watch?v={video_id}", fallback)
+            entries = [e for e in ([info]) if e is not None]
+            title = info.get('title') or url
+            self.log.emit(
+                f"      ↳ playlist unavailable; using the single video instead"
+            )
+            return entries, False, title
 
         entries = info.get('entries') or []
         is_playlist = bool(entries)
@@ -153,15 +266,21 @@ class PlaylistFetcher(QObject):
         if not entries:
             parsed = urlparse(url)
             list_id = parse_qs(parsed.query).get('list', [None])[0]
-            if list_id:
+            if list_id and want_playlist and not self._is_unlistable_playlist(url):
                 playlist_url = f"https://www.youtube.com/playlist?list={list_id}"
-                with YoutubeDL(self.ydl_opts) as ydl2:
-                    info = ydl2.extract_info(playlist_url, download=False)
-                entries = info.get('entries') or []
-                is_playlist = bool(entries)
-            else:
+                try:
+                    info2 = run(playlist_url, opts)
+                    entries = info2.get('entries') or []
+                    is_playlist = bool(entries)
+                    if entries:
+                        info = info2
+                except Exception:
+                    # Keep whatever the first pass gave us.
+                    pass
+            if not entries:
                 # Plain single video.
                 entries = [info]
+                is_playlist = False
 
         entries = [e for e in entries if e is not None]
 
@@ -233,9 +352,9 @@ class PlaylistFetcher(QObject):
         def work(i_url):
             i, u = i_url
             try:
-                return i, self._extract(u), None
+                return i, self._extract(u, want_playlist=expand_playlists), None
             except Exception as e:                       # noqa: BLE001
-                return i, None, str(e)
+                return i, None, _clean_error(e)
 
         workers = max(1, min(max_workers, total))
         playlist_sources = []          # (url, title, count) for the summary
@@ -256,6 +375,7 @@ class PlaylistFetcher(QObject):
                 if is_playlist and len(entries) <= 1:
                     is_playlist = False
                 if is_playlist and not expand_playlists:
+                    # noplaylist should already have prevented this; guard anyway.
                     entries = entries[:1]
                     is_playlist = False
                     self.log.emit(
