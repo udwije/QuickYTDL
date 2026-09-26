@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  installer/QuickYTDL.wxs - WiX v4/v5/v6 authoring for the QuickYTDL MSI.
+
+  Wraps the single-file executable produced by PyInstaller
+  (dist/QuickYTDL.exe). It does NOT rebuild the app - run
+  `pyinstaller QuickYTDL.spec` first, or use Build-Installer.ps1 which
+  does both steps in order. The GitHub release workflow calls `wix build`
+  directly with the same -d arguments.
+
+  Supplied on the command line:
+    ExeSource      full path to the built QuickYTDL.exe
+    IconSource     full path to resources/QuickYTDL.ico
+    LicenseSource  full path to installer/License.rtf
+    ProductVersion e.g. 1.7.1
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package
+      Name="QuickYTDL"
+      Manufacturer="udwije"
+      Version="$(var.ProductVersion)"
+      UpgradeCode="{A5DA9175-3D7F-5746-82B7-78C0A95FC9CE}"
+      Scope="perMachine"
+      Compressed="yes"
+      InstallerVersion="500">
+
+    <!--
+      Keeps upgrades clean: installing 1.8.0 over 1.7.1 removes the old
+      version automatically instead of leaving two entries in Apps &
+      Features. The UpgradeCode above must NEVER change between releases
+      or this stops working.
+    -->
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of QuickYTDL is already installed. Uninstall it first if you need to go back." />
+
+    <!-- Embed everything in the .msi; no loose .cab beside it. -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="QuickYTDLIcon" SourceFile="$(var.IconSource)" />
+    <Property Id="ARPPRODUCTICON" Value="QuickYTDLIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/udwije/QuickYTDL" />
+
+    <!-- Pre-seed the install dir browser with our default. -->
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <!--
+      Installs to Program Files (64-bit). The PyInstaller output is a
+      64-bit binary, so this is the correct hive - using ProgramFilesFolder
+      here would land it in the x86 tree.
+    -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="QuickYTDL" />
+    </StandardDirectory>
+
+    <!--
+      These two must be declared explicitly, otherwise the shortcuts below
+      fail to link with "unresolved reference to symbol Directory:...".
+    -->
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="MainApplication" Title="QuickYTDL" Level="1">
+      <ComponentGroupRef Id="ApplicationComponents" />
+    </Feature>
+
+    <!-- Welcome -> License -> Install location -> Install -> Finish -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseSource)" />
+
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="ApplicationComponents">
+      <!--
+        One component, one file. Both shortcuts are nested inside the
+        <File> so the exe itself is the component keypath - that avoids
+        the dummy-registry-keypath dance and keeps uninstall tidy.
+      -->
+      <Component Directory="INSTALLFOLDER"
+                 Guid="{4EC27A21-0BD3-51B7-B3AA-729ECC382C6A}">
+        <File Id="QuickYTDLExe"
+              Name="QuickYTDL.exe"
+              Source="$(var.ExeSource)"
+              KeyPath="yes">
+
+          <Shortcut Id="StartMenuShortcut"
+                    Directory="ProgramMenuFolder"
+                    Name="QuickYTDL"
+                    Description="Playlist and video downloader"
+                    Icon="QuickYTDLIcon"
+                    Advertise="no" />
+
+          <Shortcut Id="DesktopShortcut"
+                    Directory="DesktopFolder"
+                    Name="QuickYTDL"
+                    Description="Playlist and video downloader"
+                    Icon="QuickYTDLIcon"
+                    Advertise="no" />
+        </File>
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+</Wix>
