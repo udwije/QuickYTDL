@@ -13,6 +13,8 @@ class ConfigManager:
         # sensible defaults
         self.default_save_dir = get_default_save_dir()
         self.auto_shutdown = False
+        # UI preferences
+        self.dark_mode = False
 
         # determine where to store the config file
         self._config_path = self._get_config_path()
@@ -39,6 +41,7 @@ class ConfigManager:
                 data = json.load(f)
             self.default_save_dir = data.get("default_save_dir", self.default_save_dir)
             self.auto_shutdown    = data.get("auto_shutdown",    self.auto_shutdown)
+            self.dark_mode        = bool(data.get("dark_mode",    self.dark_mode))
             # re-ensure in case the loaded path changed
             ensure_directory(self.default_save_dir)
         except FileNotFoundError:
@@ -54,6 +57,7 @@ class ConfigManager:
         data = {
             "default_save_dir": self.default_save_dir,
             "auto_shutdown":    self.auto_shutdown,
+            "dark_mode":        self.dark_mode,
         }
         try:
             with open(self._config_path, "w", encoding="utf-8") as f:

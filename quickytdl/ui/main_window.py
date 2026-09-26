@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QStyledItemDelegate, QStyle, QStyleOptionButton,
     QStyleOptionProgressBar, QTextEdit, QVBoxLayout, QWidget, QMainWindow,
     QPlainTextEdit, QMenu,
-    QTableView, QGroupBox, QStackedWidget
+    QTableView, QGroupBox, QStackedWidget, QButtonGroup, QFrame
 )
 from PyQt6.QtCore import (
     Qt, QThread, QUrl, QRect, pyqtSlot, pyqtSignal, QObject, QEvent, QSize
@@ -17,131 +17,9 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QDesktopServices, QPainter, QIcon, QColor
 
 # Central place to tweak the look of the whole app without hunting through
-# every widget constructor. Anything theme-related belongs here.
-APP_STYLESHEET = """
-QMainWindow {
-    background-color: #f5f6fa;
-}
-QGroupBox {
-    font-weight: 600;
-    border: 1px solid #d8dce6;
-    border-radius: 8px;
-    margin-top: 12px;
-    padding: 12px 8px 8px 8px;
-    background-color: #ffffff;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 6px;
-    color: #334155;
-}
-QLabel {
-    color: #334155;
-}
-QLineEdit, QComboBox {
-    border: 1px solid #cbd5e1;
-    border-radius: 6px;
-    padding: 5px 8px;
-    background: #ffffff;
-    selection-background-color: #3b82f6;
-}
-QLineEdit:focus, QComboBox:focus {
-    border: 1px solid #3b82f6;
-}
-QLineEdit:disabled, QComboBox:disabled {
-    background: #f1f5f9;
-    color: #94a3b8;
-}
-QPushButton {
-    border: 1px solid #cbd5e1;
-    border-radius: 6px;
-    padding: 6px 14px;
-    background: #ffffff;
-    color: #1e293b;
-}
-QPushButton:hover { background: #f1f5f9; }
-QPushButton:pressed { background: #e2e8f0; }
-QPushButton:disabled {
-    background: #f8fafc;
-    color: #cbd5e1;
-    border-color: #e2e8f0;
-}
-QPushButton#primaryButton {
-    background: #3b82f6;
-    border: 1px solid #2563eb;
-    color: white;
-    font-weight: 600;
-}
-QPushButton#primaryButton:hover { background: #2563eb; }
-QPushButton#primaryButton:pressed { background: #1d4ed8; }
-QPushButton#primaryButton:disabled {
-    background: #bfdbfe;
-    border-color: #bfdbfe;
-    color: #eff6ff;
-}
-QPushButton#dangerButton {
-    background: #ffffff;
-    border: 1px solid #ef4444;
-    color: #ef4444;
-    font-weight: 600;
-}
-QPushButton#dangerButton:hover { background: #fef2f2; }
-QPushButton#dangerButton:disabled {
-    border-color: #fecaca;
-    color: #fecaca;
-}
-QTableView {
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    gridline-color: #eef2f7;
-    selection-background-color: #dbeafe;
-    selection-color: #1e293b;
-    alternate-background-color: #f8fafc;
-}
-QHeaderView::section {
-    background-color: #eef2f7;
-    color: #334155;
-    padding: 6px;
-    border: none;
-    border-bottom: 1px solid #e2e8f0;
-    font-weight: 600;
-}
-QTextEdit {
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    background: #0f172a;
-    color: #d1fae5;
-    font-family: Consolas, monospace;
-}
-QStatusBar {
-    background: #ffffff;
-    border-top: 1px solid #e2e8f0;
-}
-QProgressBar {
-    border: 1px solid #cbd5e1;
-    border-radius: 4px;
-    text-align: center;
-    background: #f1f5f9;
-}
-QProgressBar::chunk {
-    background-color: #3b82f6;
-    border-radius: 4px;
-}
-QPushButton#iconToggle {
-    padding: 2px;
-    font-size: 14px;
-}
-QPushButton#iconToggle:checked {
-    background: #dbeafe;
-    border-color: #93c5fd;
-}
-QLabel#emptyState {
-    color: #94a3b8;
-    font-size: 13px;
-    padding: 24px;
-}
-"""
+# every widget constructor. Anything theme-related belongs in theme.py.
+from quickytdl.ui import theme
+
 
 from quickytdl.models import PlaylistTableModel, DownloadTableModel
 from quickytdl.fetcher import PlaylistFetcher
@@ -202,15 +80,8 @@ class ProgressBarDelegate(QStyledItemDelegate):
     canceled / failed) so the state is readable at a glance without
     reading the Status column.
     """
-    STATUS_COLORS = {
-        "Queued":      QColor("#94a3b8"),  # slate
-        "Downloading": QColor("#3b82f6"),  # blue
-        "Merging":     QColor("#6366f1"),  # indigo
-        "Completed":   QColor("#22c55e"),  # green
-        "Canceled":    QColor("#f59e0b"),  # amber
-        "Failed":      QColor("#ef4444"),  # red
-        "Skipped":     QColor("#a855f7"),  # purple
-    }
+    # Colours come from theme.py so they stay legible in both themes.
+    dark = False
 
     def paint(self, painter: QPainter, option, index):
         raw = index.data(Qt.ItemDataRole.DisplayRole) or ""
@@ -227,7 +98,7 @@ class ProgressBarDelegate(QStyledItemDelegate):
             status = index.model()._items[index.row()].status
         except Exception:
             status = "Queued"
-        color = self.STATUS_COLORS.get(status, QColor("#94a3b8"))
+        color = QColor(theme.status_color(status, self.dark))
 
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -236,7 +107,8 @@ class ProgressBarDelegate(QStyledItemDelegate):
 
         # Track (unfilled background)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#e2e8f0"))
+        pal = theme.palette(self.dark)
+        painter.setBrush(QColor(pal["hover"]))
         painter.drawRoundedRect(track, 6, 6)
 
         # Filled portion
@@ -249,7 +121,7 @@ class ProgressBarDelegate(QStyledItemDelegate):
         # Label: "42%  ·  1.2MiB/s  ·  ETA 00:12"
         label = f"{percent}%" + (f"   {extra}" if extra else "")
         painter.setFont(option.font)
-        painter.setPen(QColor("#0f172a"))
+        painter.setPen(QColor(pal["text"] if percent < 55 else "#ffffff"))
         painter.drawText(track, Qt.AlignmentFlag.AlignCenter, label)
 
         painter.restore()
@@ -351,7 +223,10 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         self.setMinimumSize(QSize(820, 560))
         self.setWindowIcon(QIcon(resource_path("resources", "QuickYTDL.png")))
-        self.setStyleSheet(APP_STYLESHEET)
+
+        # Theme defaults to light until the config is loaded below; the real
+        # preference is applied once self.config exists.
+        self._dark = False
 
         self.sb_progress = QProgressBar()
         self.sb_progress.setFixedWidth(160)
@@ -365,6 +240,9 @@ class MainWindow(QMainWindow):
 
         self.config = ConfigManager()
         self.config.load()
+        # Now that config is available, honour the saved theme preference.
+        self._dark = bool(getattr(self.config, 'dark_mode', False))
+        self._apply_theme()
         if not os.path.isdir(self.config.default_save_dir):
             self._prompt_for_default_folder()
 
@@ -376,12 +254,18 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._connect_signals()
+        # Re-apply now that every widget exists, so the theme button label
+        # and the delegates pick up the current palette.
+        self._apply_theme()
+        self._update_selection_label()
 
         self.autoShutdownChk.setChecked(self.config.auto_shutdown)
         self.fetchBtn.setEnabled(False)
         self.downloadBtn.setEnabled(False)
         self.urlEdit.textChanged.connect(self._update_fetch_button_state)
         self.fetchModel.dataChanged.connect(lambda *_: self._update_download_button_state())
+        self.fetchModel.dataChanged.connect(lambda *_: self._update_selection_label())
+        self.fetchModel.modelReset.connect(self._update_selection_label)
         self.fetchHeader.toggled.connect(lambda _: self._update_download_button_state())
 
         self._fetch_thread = None
@@ -493,10 +377,49 @@ class MainWindow(QMainWindow):
         self.batchWidget.setVisible(False)
         fetch_input_layout.addWidget(self.batchWidget)
 
-        # --- mode switch ---
-        self.batchModeCheck = QCheckBox("Batch mode — download a list of URLs at once")
+        # --- mode switch (segmented control) -----------------------------
+        # A checkbox made batch mode feel like an afterthought; two segments
+        # present them as equal, obvious choices.
+        self.singleModeBtn = QPushButton("Single URL")
+        self.singleModeBtn.setObjectName("segmentLeft")
+        self.singleModeBtn.setCheckable(True)
+        self.singleModeBtn.setChecked(True)
+        self.singleModeBtn.setToolTip("Fetch one video or playlist URL")
+
+        self.batchModeBtn = QPushButton("URL List")
+        self.batchModeBtn.setObjectName("segmentRight")
+        self.batchModeBtn.setCheckable(True)
+        self.batchModeBtn.setToolTip("Paste many URLs and fetch them all at once")
+
+        for b in (self.singleModeBtn, self.batchModeBtn):
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.modeGroup = QButtonGroup(self)
+        self.modeGroup.setExclusive(True)
+        self.modeGroup.addButton(self.singleModeBtn, 0)
+        self.modeGroup.addButton(self.batchModeBtn, 1)
+
+        # Kept for backwards compatibility with the rest of the code, which
+        # queries batchModeCheck.isChecked() in several places.
+        self.batchModeCheck = QCheckBox()
+        self.batchModeCheck.setVisible(False)
+        self.batchModeBtn.toggled.connect(self.batchModeCheck.setChecked)
         self.batchModeCheck.toggled.connect(self._toggle_batch_mode)
-        fetch_input_layout.addWidget(self.batchModeCheck)
+
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(0)
+        mode_row.addWidget(self.singleModeBtn)
+        mode_row.addWidget(self.batchModeBtn)
+        mode_row.addStretch(1)
+
+        # Theme toggle lives here so it's reachable without opening Options.
+        self.themeBtn = QPushButton("🌙  Dark")
+        self.themeBtn.setToolTip("Switch between light and dark theme")
+        self.themeBtn.setCheckable(True)
+        self.themeBtn.clicked.connect(self._toggle_theme)
+        mode_row.addWidget(self.themeBtn)
+
+        fetch_input_layout.addLayout(mode_row)
 
         # Safe to connect now that batchModeCheck exists.
         self.batchEdit.textChanged.connect(self._update_fetch_button_state)
@@ -510,14 +433,57 @@ class MainWindow(QMainWindow):
         self.searchEdit.setVisible(True)  # hide until fetched
         self.searchEdit.textChanged.connect(self._filter_playlist)
         vbox.addWidget(self.searchEdit)"""
+        # Selection toolbar: search + live selection count + bulk actions.
+        # Previously search sat alone in its own group box and the bulk
+        # actions were reachable only from a right-click menu, which made
+        # them undiscoverable.
         self.searchGroup = QGroupBox("Search")
         search_layout = QVBoxLayout(self.searchGroup)
 
         self.searchEdit = QLineEdit()
-        self.searchEdit.setPlaceholderText("Search playlist...")
+        self.searchEdit.setPlaceholderText("🔍  Filter by title or playlist name…")
+        self.searchEdit.setClearButtonEnabled(True)
+        self.searchEdit.setToolTip("Type to filter the list below")
         self.searchEdit.textChanged.connect(self._filter_playlist)
 
-        search_layout.addWidget(self.searchEdit)
+        self.selectionLabel = QLabel("0 selected")
+        self.selectionLabel.setObjectName("countBadge")
+        self.selectionLabel.setToolTip("How many videos will be downloaded")
+
+        self.selAllBtn = QPushButton("All")
+        self.selAllBtn.setObjectName("linkButton")
+        self.selAllBtn.setToolTip("Select every visible video")
+        self.selAllBtn.clicked.connect(lambda: self._bulk_select('all'))
+
+        self.selNoneBtn = QPushButton("None")
+        self.selNoneBtn.setObjectName("linkButton")
+        self.selNoneBtn.setToolTip("Deselect everything")
+        self.selNoneBtn.clicked.connect(lambda: self._bulk_select('none'))
+
+        self.selInvertBtn = QPushButton("Invert")
+        self.selInvertBtn.setObjectName("linkButton")
+        self.selInvertBtn.setToolTip("Flip the selection")
+        self.selInvertBtn.clicked.connect(lambda: self._bulk_select('invert'))
+
+        sep = QFrame()
+        sep.setObjectName("separator")
+        sep.setFrameShape(QFrame.Shape.VLine)
+
+        toolbar = QWidget()
+        toolbar.setObjectName("toolbar")
+        tb = QHBoxLayout(toolbar)
+        tb.setContentsMargins(8, 6, 8, 6)
+        tb.setSpacing(6)
+        tb.addWidget(self.searchEdit, 1)
+        tb.addWidget(sep)
+        tb.addWidget(self.selectionLabel)
+        tb.addWidget(QLabel("Select:"))
+        tb.addWidget(self.selAllBtn)
+        tb.addWidget(self.selNoneBtn)
+        tb.addWidget(self.selInvertBtn)
+
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.addWidget(toolbar)
         self.searchGroup.setVisible(False)  # Hide initially
         vbox.addWidget(self.searchGroup)
 
@@ -632,7 +598,9 @@ class MainWindow(QMainWindow):
         self.downloadTable = QTableView()
         self.downloadTable.setModel(self.downloadModel)
         self.downloadTable.hideColumn(2)
-        self.downloadTable.setItemDelegateForColumn(3, ProgressBarDelegate(self.downloadTable))
+        self.progressDelegate = ProgressBarDelegate(self.downloadTable)
+        self.progressDelegate.dark = self._dark
+        self.downloadTable.setItemDelegateForColumn(3, self.progressDelegate)
         self.cancelDelegate = CancelButtonDelegate(self.downloadTable)
         self.cancelDelegate.clicked.connect(self._cancel_single_download)
         self.downloadTable.setItemDelegateForColumn(4, self.cancelDelegate)
@@ -659,8 +627,26 @@ class MainWindow(QMainWindow):
         self.downloadStack.addWidget(self.downloadEmptyLabel)  # index 1
         self.downloadStack.setCurrentIndex(1)
 
+        # Overall progress across the whole queue. Per-row bars alone make
+        # it hard to answer "how far along is this batch?".
+        self.overallBar = QProgressBar()
+        self.overallBar.setRange(0, 100)
+        self.overallBar.setValue(0)
+        self.overallBar.setFixedHeight(16)
+        self.overallBar.setToolTip("Combined progress across all downloads")
+
+        self.overallLabel = QLabel("0 of 0 complete")
+        self.overallLabel.setObjectName("countBadge")
+
+        overall_row = QHBoxLayout()
+        overall_row.setContentsMargins(0, 0, 0, 6)
+        overall_row.addWidget(QLabel("Overall:"))
+        overall_row.addWidget(self.overallBar, 1)
+        overall_row.addWidget(self.overallLabel)
+
         self.download_group = QGroupBox("Download Progress")
         download_layout = QVBoxLayout(self.download_group)
+        download_layout.addLayout(overall_row)
         download_layout.addWidget(self.downloadStack)
         vbox.addWidget(self.download_group)
         vbox.addWidget(self.controlGroup)
@@ -803,6 +789,111 @@ class MainWindow(QMainWindow):
         """Show the download-progress table, or a friendly empty state."""
         has_items = self.downloadModel.rowCount() > 0
         self.downloadStack.setCurrentIndex(0 if has_items else 1)
+
+    # ------------------------------------------------------------------
+    # Theme
+    # ------------------------------------------------------------------
+
+    def _apply_theme(self):
+        """Apply the current theme to the window and repaint the tables."""
+        self.setStyleSheet(theme.stylesheet(self._dark))
+        # The progress delegate paints outside the stylesheet, so it needs
+        # telling which palette to draw against.
+        for attr in ('progressDelegate',):
+            d = getattr(self, attr, None)
+            if d is not None:
+                d.dark = self._dark
+        if hasattr(self, 'themeBtn'):
+            self.themeBtn.setChecked(self._dark)
+            self.themeBtn.setText("☀️  Light" if self._dark else "🌙  Dark")
+        for t in ('fetchTable', 'downloadTable'):
+            w = getattr(self, t, None)
+            if w is not None:
+                w.viewport().update()
+
+    def _toggle_theme(self):
+        """Flip light/dark and remember the choice."""
+        self._dark = not self._dark
+        self.config.dark_mode = self._dark
+        try:
+            self.config.save()
+        except Exception:
+            pass
+        self._apply_theme()
+
+    # ------------------------------------------------------------------
+    # Bulk selection
+    # ------------------------------------------------------------------
+
+    def _bulk_select(self, mode: str):
+        """
+        Apply a bulk selection action to the rows currently VISIBLE in the
+        table. Operating on the filtered view (not the whole fetch) is what
+        makes "search, then select all" work as users expect.
+        """
+        items = getattr(self.fetchModel, '_items', [])
+        if not items:
+            return
+        for it in items:
+            if mode == 'all':
+                it.selected = True
+            elif mode == 'none':
+                it.selected = False
+            elif mode == 'invert':
+                it.selected = not getattr(it, 'selected', False)
+        self._refresh_fetch_table()
+        self._sync_header_checkbox()
+        self._update_download_button_state()
+        self._update_selection_label()
+
+    def _update_overall_progress(self):
+        """
+        Aggregate the per-row percentages into one queue-wide bar so the
+        user can see how far along the whole batch is at a glance.
+        """
+        if not hasattr(self, 'overallBar'):
+            return
+        items = getattr(self.downloadModel, '_items', []) or []
+        total = len(items)
+        if not total:
+            self.overallBar.setValue(0)
+            self.overallLabel.setText("0 of 0 complete")
+            return
+
+        terminal = ("Completed", "Skipped", "Canceled", "Failed")
+        done = sum(1 for it in items if getattr(it, 'status', '') in terminal)
+        # A finished row counts as 100% regardless of its last reported pct.
+        pct_sum = sum(
+            100.0 if getattr(it, 'status', '') in terminal
+            else float(getattr(it, 'progress', 0) or 0)
+            for it in items
+        )
+        self.overallBar.setValue(int(pct_sum / total))
+
+        failed = sum(1 for it in items if getattr(it, 'status', '') == "Failed")
+        text = f"{done} of {total} complete"
+        if failed:
+            text += f" · {failed} failed"
+        self.overallLabel.setText(text)
+
+    def _update_selection_label(self):
+        """Live 'N of M selected' badge above the table."""
+        if not hasattr(self, 'selectionLabel'):
+            return
+        all_items = self._allFetchedItems or []
+        total = len(all_items)
+        sel = sum(1 for it in all_items if getattr(it, 'selected', False))
+
+        visible = len(getattr(self.fetchModel, '_items', []))
+        if visible != total:
+            self.selectionLabel.setText(f"{sel} of {total} selected · {visible} shown")
+        else:
+            self.selectionLabel.setText(f"{sel} of {total} selected")
+
+        for b in ('selAllBtn', 'selNoneBtn', 'selInvertBtn'):
+            btn = getattr(self, b, None)
+            if btn is not None:
+                btn.setEnabled(total > 0)
 
     def _update_download_button_state(self):
         """Enable Download when ≥1 playlist item is selected."""
@@ -1118,6 +1209,7 @@ class MainWindow(QMainWindow):
             self.fetchBtn, self.urlEdit, self.saveEdit,
             self.browseBtn, self.formatCombo, self.srCombo,
             self.batchEdit, self.batchFetchBtn, self.batchModeCheck,
+            self.singleModeBtn, self.batchModeBtn,
             self.expandPlaylistsCheck, self.preselectPlaylistsCheck
         ):
             w.setEnabled(False)
@@ -1183,6 +1275,7 @@ class MainWindow(QMainWindow):
             self.fetchBtn, self.urlEdit, self.browseBtn,
             self.downloadBtn, self.formatCombo, self.srCombo,
             self.batchEdit, self.batchModeCheck,
+            self.singleModeBtn, self.batchModeBtn,
             self.expandPlaylistsCheck, self.preselectPlaylistsCheck
         ):
             w.setEnabled(True)
@@ -1211,6 +1304,7 @@ class MainWindow(QMainWindow):
             item = self.downloadModel._items[idx]
             item.speed = speed
             item.eta = eta
+        self._update_overall_progress()
 
         # fixed-width status message
         msg = (
@@ -1232,6 +1326,7 @@ class MainWindow(QMainWindow):
     def on_download_finished(self, idx: int, status: str):
         """Handle one video finishing; when all are done, wrap up."""
         self.downloadModel.update_status(idx, status)
+        self._update_overall_progress()
 
         statuses = self.downloadModel.get_statuses()
         if not all(s in ("Completed", "Skipped", "Canceled", "Failed") for s in statuses):
@@ -1264,6 +1359,7 @@ class MainWindow(QMainWindow):
             self.fetchBtn, self.urlEdit, self.browseBtn,
             self.saveEdit, self.formatCombo, self.srCombo,
             self.batchEdit, self.batchModeCheck,
+            self.singleModeBtn, self.batchModeBtn,
             self.expandPlaylistsCheck, self.preselectPlaylistsCheck
         ):
             w.setEnabled(True)
